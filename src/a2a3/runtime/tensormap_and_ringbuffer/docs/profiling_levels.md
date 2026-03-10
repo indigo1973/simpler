@@ -9,11 +9,19 @@ PTO Runtime2 uses a hierarchical profiling system with compile-time macros to co
 ## Profiling Macro Hierarchy
 
 ```
-PTO2_PROFILING (base level, default=0)
-├── PTO2_ORCH_PROFILING (orchestrator, default=0, requires PTO2_PROFILING=1)
-├── PTO2_SCHED_PROFILING (scheduler, default=0, requires PTO2_PROFILING=1)
-└── PTO2_TENSORMAP_PROFILING (tensormap, default=0, requires PTO2_PROFILING=1)
+PTO2_PROFILING (base level, default=1)
+├── Swimlane phase recording: orch phases + sched phases (requires enable_profiling=true, PTO2_PROFILING=1)
+├── PTO2_ORCH_PROFILING (orch cycle accumulation + detail log, default=0, requires PTO2_PROFILING=1)
+│   └── PTO2_TENSORMAP_PROFILING (tensormap, default=0, requires PTO2_ORCH_PROFILING=1)
+└── PTO2_SCHED_PROFILING (scheduler, default=0, requires PTO2_PROFILING=1)
 ```
+
+`PTO2_PROFILING=1` compiles in cycle measurement calls and activates swimlane phase recording
+for both orchestrator (`perf_aicpu_record_orch_phase`) and scheduler (`perf_aicpu_record_phase`)
+phases. Actual phase data is only written when `enable_profiling=true` at runtime.
+
+`PTO2_ORCH_PROFILING=1` additionally accumulates per-phase cycle counters (`g_orch_*_cycle`)
+on top of the swim lane recording, enabling the detailed orchestrator breakdown log.
 
 ### Compile-Time Validation
 
@@ -28,8 +36,8 @@ Each sub-level macro requires `PTO2_PROFILING=1`:
 #error "PTO2_SCHED_PROFILING requires PTO2_PROFILING=1"
 #endif
 
-#if PTO2_TENSORMAP_PROFILING && !PTO2_PROFILING
-#error "PTO2_TENSORMAP_PROFILING requires PTO2_PROFILING=1"
+#if PTO2_TENSORMAP_PROFILING && !PTO2_ORCH_PROFILING
+#error "PTO2_TENSORMAP_PROFILING requires PTO2_ORCH_PROFILING=1"
 #endif
 ```
 
@@ -185,13 +193,13 @@ runtime->enable_profiling = true;
 
 ## Common Profiling Configurations
 
-### Development (default)
+### Development
 ```bash
 # No profiling overhead
 PTO2_PROFILING=0
 ```
 
-### Basic Performance Monitoring
+### Basic Performance Monitoring (default)
 ```bash
 # Minimal overhead, summary logs only
 PTO2_PROFILING=1

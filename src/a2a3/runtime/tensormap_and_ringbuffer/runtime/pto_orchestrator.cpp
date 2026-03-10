@@ -43,7 +43,10 @@ __attribute__((weak, visibility("hidden"))) uint64_t get_sys_cnt_aicpu() { retur
 // Also hidden to prevent HOST .so from polluting the global symbol table.
 __attribute__((weak, visibility("hidden"))) void perf_aicpu_record_orch_phase(
     AicpuPhaseId, uint64_t, uint64_t, uint32_t, uint32_t) {}
-// Accumulated nanoseconds per sub-step
+// submit_idx is always needed under PTO2_PROFILING for swim lane phase recording
+static uint32_t g_orch_submit_idx = 0;
+#if PTO2_ORCH_PROFILING
+// Accumulated nanoseconds per sub-step (only consumed by pto2_orchestrator_get_profiling)
 static uint64_t g_orch_sync_cycle = 0;       // tensormap sync
 static uint64_t g_orch_alloc_cycle = 0;      // task ring alloc
 static uint64_t g_orch_params_cycle = 0;     // param copy
@@ -54,8 +57,6 @@ static uint64_t g_orch_fanin_cycle = 0;      // fanin list + early-return check
 static uint64_t g_orch_finalize_cycle = 0;   // scheduler init + SM update
 static uint64_t g_orch_scope_end_cycle = 0;  // scope_end overhead
 static int64_t  g_orch_submit_count = 0;
-static uint32_t g_orch_submit_idx = 0;
-#if PTO2_ORCH_PROFILING
 uint64_t g_orch_alloc_wait_cycle = 0;
 uint64_t g_orch_heap_wait_cycle = 0;
 uint64_t g_orch_fanin_wait_cycle = 0;
@@ -77,12 +78,21 @@ uint64_t g_orch_scope_end_atomic_count = 0;
 #endif
 #define CYCLE_COUNT_START() uint64_t _t0 = get_sys_cnt_aicpu(), _t1
 #define CYCLE_COUNT_LAP(acc) do { _t1 = get_sys_cnt_aicpu(); acc += (_t1 - _t0); _t0 = _t1; } while(0)
+#if PTO2_ORCH_PROFILING
 #define CYCLE_COUNT_LAP_RECORD(acc, phase_id, tid) do { \
     _t1 = get_sys_cnt_aicpu(); \
     acc += (_t1 - _t0); \
     perf_aicpu_record_orch_phase((phase_id), _t0, _t1, g_orch_submit_idx, (tid)); \
     _t0 = _t1; \
 } while(0)
+#else
+// PTO2_PROFILING=1 but PTO2_ORCH_PROFILING=0: record phase for swim lane only, skip accumulation
+#define CYCLE_COUNT_LAP_RECORD(acc, phase_id, tid) do { \
+    _t1 = get_sys_cnt_aicpu(); \
+    perf_aicpu_record_orch_phase((phase_id), _t0, _t1, g_orch_submit_idx, (tid)); \
+    _t0 = _t1; \
+} while(0)
+#endif
 #else
 #define CYCLE_COUNT_START()
 #define CYCLE_COUNT_LAP(acc)
@@ -200,7 +210,9 @@ void pto2_scope_end(PTO2OrchestratorState* orch) {
 
 #if PTO2_PROFILING
     uint64_t _se1 = get_sys_cnt_aicpu();
+#if PTO2_ORCH_PROFILING
     g_orch_scope_end_cycle += (_se1 - _se0);
+#endif
     perf_aicpu_record_orch_phase(AicpuPhaseId::ORCH_SCOPE_END, _se0, _se1, g_orch_submit_idx, -1);
 #endif
 }
@@ -431,7 +443,9 @@ void pto2_submit_task(
 
 #if PTO2_PROFILING
     orch->tasks_submitted++;
+#if PTO2_ORCH_PROFILING
     g_orch_submit_count++;
+#endif
     g_orch_submit_idx++;
 #endif
 }
