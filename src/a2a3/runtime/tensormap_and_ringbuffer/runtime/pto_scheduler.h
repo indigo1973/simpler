@@ -547,11 +547,8 @@ struct PTO2SchedulerState {
 
 #if PTO2_SCHED_PROFILING
         extern uint64_t g_sched_lock_cycle[], g_sched_fanout_cycle[];
-        extern uint64_t g_sched_self_consumed_cycle[];
         extern uint64_t g_sched_lock_atomic_count[], g_sched_lock_wait_cycle[];
         extern uint64_t g_sched_fanout_atomic_count[], g_sched_push_wait_cycle[];
-        extern uint64_t g_sched_self_atomic_count[];
-        extern uint64_t g_sched_complete_count[];
         uint64_t lock_atomics = 0, lock_wait = 0;
         PTO2_SCHED_CYCLE_START();
 #endif
@@ -644,7 +641,8 @@ struct PTO2SchedulerState {
         // Self consumed check
 #if PTO2_SCHED_PROFILING
         uint64_t self_atomics = 0;
-        check_and_handle_consumed(slot, task, self_atomics);
+        PTO2TaskDescriptor& task = pto2_sm_get_task_by_slot(sm_handle, slot);
+        check_and_handle_consumed(task_id, task, self_atomics);
         g_sched_self_atomic_count[thread_idx] += self_atomics;
         PTO2_SCHED_CYCLE_LAP(g_sched_self_consumed_cycle[thread_idx]);
         g_sched_complete_count[thread_idx]++;
