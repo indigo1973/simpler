@@ -435,6 +435,7 @@ void pto2_submit_mixed_task(
 
     // Initialize mixed-task descriptor
     task.mixed_task_id = mixed_task_id;
+    task.submit_idx = g_orch_submit_idx;
     task.kernel_id[static_cast<int>(PTO2SubtaskSlot::AIC)]  = normalized.aic_kernel_id;
     task.kernel_id[static_cast<int>(PTO2SubtaskSlot::AIV0)] = normalized.aiv0_kernel_id;
     task.kernel_id[static_cast<int>(PTO2SubtaskSlot::AIV1)] = normalized.aiv1_kernel_id;

@@ -867,62 +867,77 @@ def generate_chrome_trace_json(tasks, output_path, func_id_to_name=None, verbose
                 })
                 flow_id += 1
 
-    # Orchestrator FINALIZE → Scheduler DISPATCH arrows (per task_id)
-    if orchestrator_phases and scheduler_phases:
-        # Flatten per-thread orch phases and track source thread
-        orch_finalize_by_task = {}
+    # Orchestrator FANIN(end) → Scheduler DISPATCH(start) arrows.
+    # Prefer submit_idx (global monotonic submit order), fallback to task_id.
+    if orchestrator_phases and scheduler_phases and has_aicpu_data:
+        # submit_idx -> (fanin_record, orch_thread_idx)
+        orch_fanin_by_submit = {}
+        # task_id -> (fanin_record, orch_thread_idx)
+        orch_fanin_by_task = {}
         for orch_idx, thread_records in enumerate(orch_threads):
             for record in thread_records:
-                if record.get("phase") == "orch_finalize":
-                    task_id = record.get("task_id", -1)
-                    if task_id >= 0:
-                        orch_finalize_by_task[task_id] = (record, orch_idx)
-
-        # Use core_to_sched_thread mapping (built above) to find the correct
-        # scheduler thread for each task's core.
-        if orch_finalize_by_task and has_aicpu_data:
-            for task in tasks:
-                tid = task.get('task_id')
-                if tid is None or tid not in orch_finalize_by_task:
+                if record.get("phase") != "orch_fanin":
                     continue
-
-                dispatch_us = task.get('dispatch_time_us', 0)
-                if dispatch_us <= 0:
+                submit_idx = record.get("submit_idx", 0)
+                if isinstance(submit_idx, int) and submit_idx > 0:
+                    prev = orch_fanin_by_submit.get(submit_idx)
+                    if prev is None or record.get("end_time_us", 0) > prev[0].get("end_time_us", 0):
+                        orch_fanin_by_submit[submit_idx] = (record, orch_idx)
+                task_id = record.get("task_id", -1)
+                if not isinstance(task_id, int) or task_id < 0:
                     continue
+                prev = orch_fanin_by_task.get(task_id)
+                if prev is None or record.get("end_time_us", 0) > prev[0].get("end_time_us", 0):
+                    orch_fanin_by_task[task_id] = (record, orch_idx)
 
-                finalize_rec, orch_idx = orch_finalize_by_task[tid]
-                # Use finalize start_time: init_task() runs at the beginning of FINALIZE,
-                # making the task dispatchable before FINALIZE ends. Using start avoids
-                # reverse arrows when the scheduler dispatches during FINALIZE.
-                finalize_start_us = finalize_rec["start_time_us"]
+        for task in tasks:
+            fanin_entry = None
+            submit_idx = task.get("submit_idx", 0)
+            if isinstance(submit_idx, int) and submit_idx > 0:
+                fanin_entry = orch_fanin_by_submit.get(submit_idx)
+            if fanin_entry is None:
+                task_id = task.get("task_id")
+                if task_id is None:
+                    continue
+                fanin_entry = orch_fanin_by_task.get(task_id)
+                if fanin_entry is None:
+                    continue
+            dispatch_us = task.get("dispatch_time_us", 0)
+            if dispatch_us <= 0:
+                continue
 
-                matched_thread = core_to_sched_thread.get(task['core_id'])
+            fanin_rec, orch_idx = fanin_entry
+            fanin_end_us = fanin_rec.get("end_time_us", 0)
+            if fanin_end_us <= 0:
+                continue
 
-                if matched_thread is not None:
-                    sched_tid = 3000 + matched_thread
-                    orch_tid = 4000 + orch_idx
+            matched_thread = core_to_sched_thread.get(task['core_id'])
+            if matched_thread is None:
+                continue
 
-                    # Flow: Orchestrator finalize start → Scheduler DISPATCH
-                    events.append({
-                        "cat": "flow",
-                        "id": flow_id,
-                        "name": "orch→dispatch",
-                        "ph": "s",
-                        "pid": 4,
-                        "tid": orch_tid,
-                        "ts": finalize_start_us
-                    })
-                    events.append({
-                        "cat": "flow",
-                        "id": flow_id,
-                        "name": "orch→dispatch",
-                        "ph": "f",
-                        "pid": 3,
-                        "tid": sched_tid,
-                        "ts": dispatch_us,
-                        "bp": "e"
-                    })
-                    flow_id += 1
+            sched_tid = 3000 + matched_thread
+            orch_tid = 4000 + orch_idx
+
+            events.append({
+                "cat": "flow",
+                "id": flow_id,
+                "name": "orch→dispatch",
+                "ph": "s",
+                "pid": 4,
+                "tid": orch_tid,
+                "ts": fanin_end_us
+            })
+            events.append({
+                "cat": "flow",
+                "id": flow_id,
+                "name": "orch→dispatch",
+                "ph": "f",
+                "pid": 3,
+                "tid": sched_tid,
+                "ts": dispatch_us,
+                "bp": "e"
+            })
+            flow_id += 1
 
     if verbose:
         print(f"  Total events: {len(events)}")

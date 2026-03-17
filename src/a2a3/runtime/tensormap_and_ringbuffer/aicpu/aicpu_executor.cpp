@@ -370,6 +370,10 @@ struct AicpuExecutor {
                         if (record->task_id == static_cast<uint32_t>(expected_reg_task_id)) {
                             // Fill metadata that AICore doesn't know
                             int32_t perf_slot_idx = static_cast<int32_t>(executing_subslot_by_core_[core_id]);
+                            // Normalize to orchestrator-visible task identity.
+                            record->task_id = static_cast<uint32_t>(
+                                pto2_task_id_local(slot_state.task->mixed_task_id));
+                            record->submit_idx = slot_state.task->submit_idx;
                             record->func_id = slot_state.task->kernel_id[perf_slot_idx];
                             record->core_type = CT;
                             perf_aicpu_record_dispatch_and_finish_time(

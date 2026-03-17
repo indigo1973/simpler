@@ -59,6 +59,7 @@ static inline void perf_aicore_record_task(
     record->end_time = end_time;
     record->kernel_ready_time = kernel_ready_time;
     record->task_id = task_id;
+    record->submit_idx = 0;
 
     perf_buf->count = idx + 1;
 

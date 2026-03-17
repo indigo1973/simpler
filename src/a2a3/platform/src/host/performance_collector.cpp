@@ -988,6 +988,7 @@ int PerformanceCollector::export_swimlane_json(const std::string& output_path) {
 
         outfile << "    {\n";
         outfile << "      \"task_id\": " << record.task_id << ",\n";
+        outfile << "      \"submit_idx\": " << record.submit_idx << ",\n";
         outfile << "      \"func_id\": " << record.func_id << ",\n";
         outfile << "      \"core_id\": " << tagged.core_id << ",\n";
         outfile << "      \"core_type\": \"" << core_type_str << "\",\n";

@@ -346,6 +346,7 @@ struct PTO2DepListEntry {
 struct PTO2TaskDescriptor {
     // Mixed-task identification (encodes ring_id in upper 32 bits)
     PTO2TaskId mixed_task_id;         // raw: (ring_id << 32) | local_id
+    uint32_t submit_idx{0};           // Monotonic submit order for profiling correlation
 
     // Per-slot kernel IDs (INVALID_KERNEL_ID = inactive)
     int32_t kernel_id[PTO2_SUBTASK_SLOT_COUNT];
