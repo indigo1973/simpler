@@ -878,17 +878,14 @@ def generate_chrome_trace_json(tasks, output_path, func_id_to_name=None, verbose
             for record in thread_records:
                 if record.get("phase") != "orch_fanin":
                     continue
+
                 submit_idx = record.get("submit_idx", 0)
                 if isinstance(submit_idx, int) and submit_idx > 0:
-                    prev = orch_fanin_by_submit.get(submit_idx)
-                    if prev is None or record.get("end_time_us", 0) > prev[0].get("end_time_us", 0):
-                        orch_fanin_by_submit[submit_idx] = (record, orch_idx)
+                    _update_fanin_lookup(orch_fanin_by_submit, submit_idx, record, orch_idx)
+
                 task_id = record.get("task_id", -1)
-                if not isinstance(task_id, int) or task_id < 0:
-                    continue
-                prev = orch_fanin_by_task.get(task_id)
-                if prev is None or record.get("end_time_us", 0) > prev[0].get("end_time_us", 0):
-                    orch_fanin_by_task[task_id] = (record, orch_idx)
+                if isinstance(task_id, int) and task_id >= 0:
+                    _update_fanin_lookup(orch_fanin_by_task, task_id, record, orch_idx)
 
         for task in tasks:
             fanin_entry = None
