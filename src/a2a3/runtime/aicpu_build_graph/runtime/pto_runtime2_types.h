@@ -133,10 +133,6 @@ static inline uint32_t pto2_task_id_local(PTO2TaskId task_id) {
     return task_id.local();
 }
 
-static inline uint64_t pto2_task_id_raw(PTO2TaskId task_id) {
-    return task_id.raw;
-}
-
 // =============================================================================
 // Worker Types
 // =============================================================================

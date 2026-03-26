@@ -437,25 +437,19 @@ struct AicpuExecutor {
                     uint32_t count = perf_buf->count;
                     if (count > 0) {
                         PerfRecord* record = &perf_buf->records[count - 1];
-                        if (record->task_id == static_cast<uint32_t>(expected_reg_task_id)) {
+                        if (static_cast<uint32_t>(record->mixed_task_id) == static_cast<uint32_t>(expected_reg_task_id)) {
                             // Fill metadata that AICore doesn't know
                             int32_t perf_slot_idx = static_cast<int32_t>(core_exec_state.executing_subslot);
                             record->func_id = slot_state.task->kernel_id[perf_slot_idx];
                             record->core_type = CT;
                             perf_aicpu_record_dispatch_and_finish_time(
                                 record, core_exec_state.dispatch_timestamp, finish_ts);
-
-                            // Fill ring_id from slot state
-                            record->ring_id = slot_state.ring_id;
-
-                            // Fill fanout from slot_state's dependency linked list.
-                            // No lock: head-insert guarantees existing nodes' next pointers
-                            // are stable, so this snapshot is consistent (best-effort).
+                            record->mixed_task_id = slot_state.task->mixed_task_id.raw;
                             record->fanout_count = 0;
                             PTO2DepListEntry* cur = slot_state.fanout_head;
                             while (cur != nullptr && record->fanout_count < RUNTIME_MAX_FANOUT) {
-                                record->fanout[record->fanout_count++] = static_cast<int32_t>(
-                                    cur->slot_state->task->mixed_task_id.local());
+                                const PTO2TaskId succ = cur->slot_state->task->mixed_task_id;
+                                record->fanout[record->fanout_count++] = succ.raw;
                                 cur = cur->next;
                             }
                         }
@@ -598,13 +592,14 @@ struct AicpuExecutor {
             core_exec_state.dispatch_count++;
         }
 #endif
-        // Per-core monotonic counter for register protocol uniqueness.
+        // Per-core monotonic counter for register protocol uniqueness (32-bit).
         // mixed_task_id encodes (ring_id << 32 | local_id); truncation to
         // uint32 loses ring_id, so tasks from different rings with the same
         // local_id would write identical DATA_MAIN_BASE values. The AICore
         // uses last_reg_val to detect new dispatches and would skip the
         // duplicate, while the stale COND register from the previous task
         // (same local_id) would cause a false-positive completion.
+        // PerfRecord.mixed_task_id: register token (low 32) until AICPU overwrites with full raw.
         core_exec_state.dispatch_seq++;
         uint32_t reg_task_id = core_exec_state.dispatch_seq & TASK_ID_MASK;
         // Skip reserved sentinel range [AICORE_EXIT_SIGNAL, 0x7FFFFFFF]
