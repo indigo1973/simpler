@@ -40,9 +40,9 @@ struct PTO2SchedulerState;  // Forward declaration for dep_pool reclaim
 #endif
 
 // Block notification interval (in spin counts)
-#define PTO2_BLOCK_NOTIFY_INTERVAL  10000
+#define PTO2_BLOCK_NOTIFY_INTERVAL  100000
 // Heap ring spin limit - after this, report deadlock and exit
-#define PTO2_HEAP_SPIN_LIMIT        100000
+#define PTO2_HEAP_SPIN_LIMIT        1000000
 
 // Flow control spin limit - if exceeded, likely deadlock due to scope/fanout_count
 #define PTO2_FLOW_CONTROL_SPIN_LIMIT  100000

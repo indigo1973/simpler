@@ -41,7 +41,7 @@ RUNTIME_CONFIG = {
 
 # Small ring buffer sizes — see module docstring for rationale.
 RUNTIME_ENV = {
-    "PTO2_RING_TASK_WINDOW": "128",
+    "PTO2_RING_TASK_WINDOW": "32",
     "PTO2_RING_HEAP": "262144",
     "PTO2_RING_DEP_POOL": "256",
 }
