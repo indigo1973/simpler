@@ -61,6 +61,11 @@ target_compile_options(aicore_kernel
 # This enables CPU stubs for PTO instructions (TLOAD, TSTORE, TADD, etc.)
 target_compile_definitions(aicore_kernel PRIVATE __CPU_SIM)
 
+# Preprocessor defines from CUSTOM_COMPILE_FLAGS (semicolon-separated NAME or NAME=VALUE list)
+if(DEFINED CUSTOM_COMPILE_FLAGS)
+    target_compile_definitions(aicore_kernel PRIVATE ${CUSTOM_COMPILE_FLAGS})
+endif()
+
 # Include directories
 target_include_directories(aicore_kernel
     PRIVATE

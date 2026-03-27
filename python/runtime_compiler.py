@@ -3,7 +3,7 @@ import os
 import subprocess
 import tempfile
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Sequence
 from toolchain import Toolchain, CCECToolchain, Aarch64GxxToolchain, GxxToolchain
 import env_manager
 import multiprocessing
@@ -28,14 +28,22 @@ class BuildTarget:
     def get_binary_name(self) -> str:
         return self._binary_name
 
-    def gen_cmake_args(self, include_dirs: List[str], source_dirs: List[str]) -> List[str]:
-        """Generate CMake arguments list from toolchain args + custom directories."""
+    def gen_cmake_args(self, include_dirs: List[str], source_dirs: List[str],
+                       extra_defines: Optional[Sequence[str]] = None) -> List[str]:
+        """Generate CMake arguments list from toolchain args + custom directories.
+
+        extra_defines: optional list of NAME or NAME=VALUE strings that become
+            -DNAME / -DNAME=VALUE preprocessor macros in every compiled file.
+            Passed to CMake as CUSTOM_COMPILE_FLAGS (semicolon-separated list).
+        """
         inc = ";".join(os.path.abspath(d) for d in include_dirs)
         src = ";".join(os.path.abspath(d) for d in source_dirs)
         args = self.toolchain.get_cmake_args() + [
             f"-DCUSTOM_INCLUDE_DIRS={inc}",
             f"-DCUSTOM_SOURCE_DIRS={src}",
         ]
+        if extra_defines:
+            args.append(f"-DCUSTOM_COMPILE_FLAGS={';'.join(extra_defines)}")
         if logger.isEnabledFor(logging.DEBUG):
             args.append("--log-level=VERBOSE")
         return args
@@ -203,6 +211,7 @@ class RuntimeCompiler:
         include_dirs: List[str],
         source_dirs: List[str],
         build_dir: Optional[str],
+        extra_defines: Optional[Sequence[str]] = None,
     ) -> bytes:
         """
         Compile binary for the specified target platform.
@@ -233,7 +242,7 @@ class RuntimeCompiler:
                 "Must be 'aicore', 'aicpu', or 'host'."
             )
 
-        cmake_args = target.gen_cmake_args(include_dirs, source_dirs)
+        cmake_args = target.gen_cmake_args(include_dirs, source_dirs, extra_defines)
         cmake_source_dir = target.get_root_dir()
         binary_name = target.get_binary_name()
         platform = target_platform.upper()

@@ -46,6 +46,13 @@ set(AICORE_FLAGS
 )
 separate_arguments(AICORE_FLAGS)
 
+# Append -DNAME or -DNAME=VALUE flags from CUSTOM_COMPILE_FLAGS (semicolon-separated list)
+if(DEFINED CUSTOM_COMPILE_FLAGS)
+    foreach(DEF ${CUSTOM_COMPILE_FLAGS})
+        list(APPEND AICORE_FLAGS "-D${DEF}")
+    endforeach()
+endif()
+
 # Step 1: Compile each source file to individual .o files for AIC and AIV
 set(ALL_AIC_OBJECTS "")
 set(ALL_AIV_OBJECTS "")

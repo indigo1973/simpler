@@ -9,6 +9,14 @@
 # The "orchestration" directory contains source files compiled into both
 # runtime targets AND the orchestration .so (e.g., tensor methods needed
 # by the Tensor constructor's validation logic).
+#
+# Each target supports an optional "extra_defines" list to inject compile-time
+# preprocessor macros without modifying pto_runtime2_types.h. Examples:
+#
+#   "extra_defines": ["PTO2_ORCH_PROFILING=1", "PTO2_SCHED_PROFILING=1"]
+#
+# These become -DNAME=VALUE flags for AICPU and AICore compilation
+# (they do NOT apply to the host target).
 
 BUILD_CONFIG = {
     "aicore": {

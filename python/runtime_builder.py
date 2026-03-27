@@ -4,7 +4,7 @@ from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
 from runtime_compiler import RuntimeCompiler
 from kernel_compiler import KernelCompiler
-from typing import Optional
+from typing import List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -64,7 +64,8 @@ class RuntimeBuilder:
         """Return names of discovered runtime implementations."""
         return list(self._runtimes.keys())
 
-    def build(self, name: str, build_dir: Optional[str] = None) -> tuple:
+    def build(self, name: str, build_dir: Optional[str] = None,
+              macro_defines: Optional[List[str]] = None) -> tuple:
         """
         Build a specific runtime implementation by name.
 
@@ -101,10 +102,12 @@ class RuntimeBuilder:
         aicore_cfg = build_config["aicore"]
         aicore_include_dirs = [str((config_dir / p).resolve()) for p in aicore_cfg["include_dirs"]]
         aicore_source_dirs = [str((config_dir / p).resolve()) for p in aicore_cfg["source_dirs"]]
+        aicore_extra_defines = list(aicore_cfg.get("extra_defines") or []) + list(macro_defines or [])
 
         aicpu_cfg = build_config["aicpu"]
         aicpu_include_dirs = [str((config_dir / p).resolve()) for p in aicpu_cfg["include_dirs"]]
         aicpu_source_dirs = [str((config_dir / p).resolve()) for p in aicpu_cfg["source_dirs"]]
+        aicpu_extra_defines = list(aicpu_cfg.get("extra_defines") or []) + list(macro_defines or [])
 
         host_cfg = build_config["host"]
         host_include_dirs = [str((config_dir / p).resolve()) for p in host_cfg["include_dirs"]]
@@ -114,8 +117,8 @@ class RuntimeBuilder:
         logger.info("Compiling AICore, AICPU, Host in parallel...")
 
         with ThreadPoolExecutor(max_workers=3) as executor:
-            fut_aicore = executor.submit(compiler.compile, "aicore", aicore_include_dirs, aicore_source_dirs, build_dir)
-            fut_aicpu = executor.submit(compiler.compile, "aicpu", aicpu_include_dirs, aicpu_source_dirs, build_dir)
+            fut_aicore = executor.submit(compiler.compile, "aicore", aicore_include_dirs, aicore_source_dirs, build_dir, aicore_extra_defines)
+            fut_aicpu = executor.submit(compiler.compile, "aicpu", aicpu_include_dirs, aicpu_source_dirs, build_dir, aicpu_extra_defines)
             fut_host = executor.submit(compiler.compile, "host", host_include_dirs, host_source_dirs, build_dir)
 
             aicore_binary = fut_aicore.result()

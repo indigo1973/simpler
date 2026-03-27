@@ -198,6 +198,20 @@ Golden.py interface:
         help="Skip golden computation and comparison (for benchmarking)"
     )
 
+    parser.add_argument(
+        "-m", "--macro-defines",
+        action="append",
+        dest="defines",
+        default=[],
+        metavar="NAME[=VALUE]",
+        help=(
+            "Inject a compile-time preprocessor macro for AICPU/AICore "
+            "(e.g., -m PTO2_ORCH_PROFILING=1). "
+            "May be repeated for multiple macros. "
+            "Merged with any extra_defines in the runtime's build_config.py."
+        )
+    )
+
     args = parser.parse_args()
 
     if args.all and args.case:
@@ -267,6 +281,7 @@ Golden.py interface:
             repeat_rounds=args.rounds,
             clone_protocol=args.clone_protocol,
             skip_golden=args.skip_golden,
+            macro_defines=args.defines,
         )
 
         # Snapshot existing device logs before the run so we can identify the

@@ -45,6 +45,11 @@ endif()
 # Create shared library (host-compatible for dlopen)
 add_library(aicpu_kernel SHARED ${AICPU_SOURCES})
 
+# Preprocessor defines from CUSTOM_COMPILE_FLAGS (semicolon-separated NAME or NAME=VALUE list)
+if(DEFINED CUSTOM_COMPILE_FLAGS)
+    target_compile_definitions(aicpu_kernel PRIVATE ${CUSTOM_COMPILE_FLAGS})
+endif()
+
 # Compile options (host g++/gcc)
 target_compile_options(aicpu_kernel
     PRIVATE

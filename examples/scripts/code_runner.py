@@ -470,6 +470,7 @@ class CodeRunner:
         repeat_rounds: Optional[int] = None,
         clone_protocol: str = "ssh",
         skip_golden: bool = False,
+        macro_defines: Optional[List[str]] = None,
     ):
         # Setup logging if not already configured (e.g., when used directly, not via run_example.py)
         _setup_logging_if_needed()
@@ -486,6 +487,7 @@ class CodeRunner:
         self.pto_isa_commit = pto_isa_commit
         self.clone_protocol = clone_protocol
         self.build_dir = build_dir
+        self.macro_defines = macro_defines or []
 
         # Load configurations
         self._kernel_config = self._load_kernel_config()
@@ -834,7 +836,7 @@ class CodeRunner:
         ]
 
         def _build_runtime():
-            return builder.build(self.runtime_name, self.build_dir)
+            return builder.build(self.runtime_name, self.build_dir, macro_defines=self.macro_defines)
 
         def _compile_orchestration():
             return kernel_compiler.compile_orchestration(
@@ -1021,7 +1023,7 @@ class CodeRunner:
 def create_code_runner(kernels_dir, golden_path, device_id=None, platform="a2a3",
                        enable_profiling=False, run_all_cases=False, case_name=None,
                        pto_isa_commit=None, build_dir=None, repeat_rounds=None,
-                       clone_protocol="ssh", skip_golden=False):
+                       clone_protocol="ssh", skip_golden=False, macro_defines=None):
     """Factory: creates a CodeRunner based on kernel_config."""
     return CodeRunner(kernels_dir=kernels_dir, golden_path=golden_path,
                       device_id=device_id, platform=platform,
@@ -1030,4 +1032,5 @@ def create_code_runner(kernels_dir, golden_path, device_id=None, platform="a2a3"
                       pto_isa_commit=pto_isa_commit, build_dir=build_dir,
                       repeat_rounds=repeat_rounds,
                       clone_protocol=clone_protocol,
-                      skip_golden=skip_golden)
+                      skip_golden=skip_golden,
+                      macro_defines=macro_defines)
