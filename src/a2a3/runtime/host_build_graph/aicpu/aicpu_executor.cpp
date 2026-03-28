@@ -623,11 +623,34 @@ int AicpuExecutor::resolve_and_dispatch(Runtime& runtime, int thread_idx, const 
                 
 
                 int completed_task_id = pending_task_ids_[core_id];
+                int prev_running_id = running_task_ids_[core_id];
 
-                // Profiling
+                // Profiling: when prev_running_id exists, its AICore record was
+                // written first (at records[count]), so complete it BEFORE the
+                // pending task's record to maintain buffer ordering.
                 if (profiling_enabled) {
                     uint64_t finish_ts = get_sys_cnt_aicpu();
                     PerfBuffer* perf_buf = (PerfBuffer*)h->perf_records_addr;
+
+                    if (prev_running_id != AICPU_TASK_INVALID) {
+                        Task* prev_task = &runtime.tasks[prev_running_id];
+                        uint64_t fanout_arr[RUNTIME_MAX_FANOUT];
+                        for (int i = 0; i < prev_task->fanout_count; i++) {
+                            fanout_arr[i] = static_cast<uint64_t>(prev_task->fanout[i]);
+                        }
+                        if (perf_aicpu_complete_record(perf_buf,
+                            static_cast<uint32_t>(prev_running_id),
+                            static_cast<uint64_t>(prev_running_id),
+                            prev_task->func_id, h->core_type,
+                            dispatch_timestamps_[core_id], finish_ts,
+                            fanout_arr, prev_task->fanout_count) != 0) {
+                            DEV_ERROR("Core %d: perf_aicpu_complete_record failed for implicit task %d",
+                                core_id, prev_running_id);
+                        }
+                        dispatch_timestamps_[core_id] = get_sys_cnt_aicpu();
+                    }
+
+                    finish_ts = get_sys_cnt_aicpu();
                     Task* task = &runtime.tasks[completed_task_id];
                     uint64_t fanout_arr[RUNTIME_MAX_FANOUT];
                     for (int i = 0; i < task->fanout_count; i++) {
@@ -648,7 +671,6 @@ int AicpuExecutor::resolve_and_dispatch(Runtime& runtime, int thread_idx, const 
                 cur_thread_completed++;
                 completed_tasks_.fetch_add(1, std::memory_order_release);
 
-                int prev_running_id = running_task_ids_[core_id];
                 pending_task_ids_[core_id] = AICPU_TASK_INVALID;
                 running_task_ids_[core_id] = AICPU_TASK_INVALID;
 
@@ -735,6 +757,27 @@ int AicpuExecutor::resolve_and_dispatch(Runtime& runtime, int thread_idx, const 
                 // completed (AICore overwrote COND before we could read its FIN).
                 // Count it here to avoid losing completion.
                 if (prev_running_id != AICPU_TASK_INVALID) {
+                    // Profiling: complete the implicit task's AICore record
+                    if (profiling_enabled) {
+                        uint64_t finish_ts = get_sys_cnt_aicpu();
+                        PerfBuffer* perf_buf = (PerfBuffer*)h->perf_records_addr;
+                        Task* prev_task = &runtime.tasks[prev_running_id];
+                        uint64_t fanout_arr[RUNTIME_MAX_FANOUT];
+                        for (int i = 0; i < prev_task->fanout_count; i++) {
+                            fanout_arr[i] = static_cast<uint64_t>(prev_task->fanout[i]);
+                        }
+                        if (perf_aicpu_complete_record(perf_buf,
+                            static_cast<uint32_t>(prev_running_id),
+                            static_cast<uint64_t>(prev_running_id),
+                            prev_task->func_id, h->core_type,
+                            dispatch_timestamps_[core_id], finish_ts,
+                            fanout_arr, prev_task->fanout_count) != 0) {
+                            DEV_ERROR("Core %d: perf_aicpu_complete_record failed for implicit task %d",
+                                core_id, prev_running_id);
+                        }
+                        dispatch_timestamps_[core_id] = get_sys_cnt_aicpu();
+                    }
+
                     cur_thread_completed++;
                     completed_tasks_.fetch_add(1, std::memory_order_release);
 
