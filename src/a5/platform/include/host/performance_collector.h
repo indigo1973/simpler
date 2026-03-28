@@ -94,6 +94,7 @@ struct ReadyBufferInfo {
  */
 struct CopyDoneInfo {
     void* dev_buffer_ptr;     // Device buffer to free
+    ProfBufferType type;      // Buffer type (for recycling)
 };
 
 /**
@@ -196,6 +197,10 @@ private:
 
     // Device-to-host pointer mapping (populated during alloc_and_register)
     std::unordered_map<void*, void*> dev_to_host_;
+
+    // Recycled buffer pools (avoids alloc/free churn in mgmt_loop)
+    std::vector<void*> recycled_perf_buffers_;
+    std::vector<void*> recycled_phase_buffers_;
 
     // Management thread main loop
     void mgmt_loop();
