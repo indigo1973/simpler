@@ -161,7 +161,7 @@ def _is_git_available() -> bool:
 _PTO_ISA_HTTPS = "https://github.com/PTO-ISA/pto-isa.git"
 _PTO_ISA_SSH = "git@github.com:PTO-ISA/pto-isa.git"
 # Temporary: pin pto-isa to a known-good commit until the dependency is managed properly
-_PTO_ISA_PINNED_COMMIT = "a6528046c30dbe974ee8eaf249d6a73056c651bf"
+_PTO_ISA_PINNED_COMMIT = "012a8c22fd0121c59ec2462da2146c260266f63b"
 
 
 def _pto_isa_repo_url(clone_protocol: str = "ssh") -> str:
@@ -283,10 +283,12 @@ def _checkout_pto_isa_commit(clone_path: Path, commit: str, verbose: bool = Fals
                 timeout=30,
                 check=True,
             )
+        return True
     except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
         logger.warning(f"Failed to checkout pto-isa commit {commit}: {e.stderr if hasattr(e, 'stderr') else e}")
     except Exception as e:
         logger.warning(f"Unexpected error checking out pto-isa commit {commit}: {e}")
+        return False
 
 
 def _update_pto_isa_to_latest(clone_path: Path, verbose: bool = False) -> None:
@@ -365,6 +367,8 @@ def _ensure_pto_isa_root_locked(
 ) -> Optional[str]:
     """Inner logic for _ensure_pto_isa_root, called while holding the file lock."""
 
+    target_commit = commit or _PTO_ISA_PINNED_COMMIT
+
     # Clone if needed
     if not _is_pto_isa_cloned():
         if verbose:
@@ -382,12 +386,12 @@ def _ensure_pto_isa_root_locked(
                 return None
             if verbose:
                 logger.info("pto-isa already cloned by another process")
-            # Recovered from race — apply commit/update below
-            _checkout_pto_isa_commit(clone_path, commit or _PTO_ISA_PINNED_COMMIT, verbose=verbose)
-    elif commit:
-        _checkout_pto_isa_commit(clone_path, commit, verbose=verbose)
+            # Recovered from race — apply commit below
+            if not _checkout_pto_isa_commit(clone_path, target_commit, verbose=verbose):
+                _reclone_pto_isa(clone_path, target_commit, verbose, clone_protocol)
     else:
-        _checkout_pto_isa_commit(clone_path, _PTO_ISA_PINNED_COMMIT, verbose=verbose)
+        if not _checkout_pto_isa_commit(clone_path, target_commit, verbose=verbose):
+            _reclone_pto_isa(clone_path, target_commit, verbose, clone_protocol)
 
     # Verify clone has expected content
     include_dir = clone_path / "include"
