@@ -94,6 +94,7 @@ struct ReadyBufferInfo {
  */
 struct CopyDoneInfo {
     void* dev_buffer_ptr;     // Device buffer to free
+    ProfBufferType type;      // Buffer type (for recycling)
 };
 
 /**
@@ -196,6 +197,10 @@ private:
 
     // Device-to-host pointer mapping (populated during alloc_and_register)
     std::unordered_map<void*, void*> dev_to_host_;
+
+    // Recycled buffer pools (avoids alloc/free churn in mgmt_loop)
+    std::vector<void*> recycled_perf_buffers_;
+    std::vector<void*> recycled_phase_buffers_;
 
     // Management thread main loop
     void mgmt_loop();
@@ -334,6 +339,22 @@ public:
     void collect_phase_data();
 
     /**
+     * Scan PerfBufferState::current_buf_ptr for all cores to recover
+     * partial records not delivered through the pipeline.
+     *
+     * Must be called after device execution completes and after
+     * stop_memory_manager(). Follows the same pattern as collect_phase_data()
+     * for PhaseBufferStates.
+     */
+    void scan_remaining_perf_buffers();
+
+    /**
+     * Signal that device execution is complete (streams synchronized).
+     * poll_and_collect() will drain remaining pipeline data and exit.
+     */
+    void signal_execution_complete();
+
+    /**
      * Get collected records (for testing)
      */
     const std::vector<std::vector<PerfRecord>>& get_records() const { return collected_perf_records_; }
@@ -367,6 +388,9 @@ private:
 
     // Core-to-thread mapping (core_id → scheduler thread index, -1 = unassigned)
     std::vector<int8_t> core_to_thread_;
+
+    // Signal from device_runner that execution is complete
+    std::atomic<bool> execution_complete_{false};
 
     // Allocate a single buffer (PerfBuffer or PhaseBuffer) and register it
     void* alloc_single_buffer(size_t size, void** host_ptr_out);

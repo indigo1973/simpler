@@ -171,7 +171,21 @@ void perf_aicpu_switch_buffer(Runtime* runtime, int core_id, int thread_idx) {
     LOG_INFO("Thread %d: Core %d buffer is full (count=%u)",
          thread_idx, core_id, full_buf->count);
 
-    // Enqueue to ReadyQueue
+    // Check free_queue before committing the full buffer
+    rmb();
+    uint32_t head = state->free_queue.head;
+    uint32_t tail = state->free_queue.tail;
+
+    if (head == tail) {
+        // No replacement buffer available — overwrite current buffer to keep AICore alive
+        LOG_WARN("Thread %d: Core %d no free buffer, overwriting current buffer (data lost)",
+            thread_idx, core_id);
+        full_buf->count = 0;
+        wmb();
+        return;
+    }
+
+    // Enqueue full buffer to ReadyQueue
     uint32_t seq = state->current_buf_seq;
     int rc = enqueue_ready_buffer(s_perf_header, thread_idx, core_id,
         state->current_buf_ptr, seq, 0);
@@ -185,37 +199,23 @@ void perf_aicpu_switch_buffer(Runtime* runtime, int core_id, int thread_idx) {
     }
 
     // Pop next buffer from free_queue
+    uint64_t new_buf_ptr = state->free_queue.buffer_ptrs[head % PLATFORM_PROF_SLOT_COUNT];
     rmb();
-    uint32_t head = state->free_queue.head;
-    uint32_t tail = state->free_queue.tail;
+    state->free_queue.head = head + 1;
+    state->current_buf_ptr = new_buf_ptr;
+    state->current_buf_seq = seq + 1;
+    wmb();
 
-    if (head != tail) {
-        uint64_t new_buf_ptr = state->free_queue.buffer_ptrs[head % PLATFORM_PROF_SLOT_COUNT];
-        rmb();
-        state->free_queue.head = head + 1;
-        state->current_buf_ptr = new_buf_ptr;
-        state->current_buf_seq = seq + 1;
-        wmb();
+    PerfBuffer* new_buf = (PerfBuffer*)new_buf_ptr;
+    new_buf->count = 0;
 
-        PerfBuffer* new_buf = (PerfBuffer*)new_buf_ptr;
-        new_buf->count = 0;
+    // Update handshake for AICore
+    Handshake* h = &runtime->workers[core_id];
+    h->perf_records_addr = new_buf_ptr;
+    wmb();
 
-        // Update handshake for AICore
-        Handshake* h = &runtime->workers[core_id];
-        h->perf_records_addr = new_buf_ptr;
-        wmb();
-
-        LOG_INFO("Thread %d: Core %d switched to new buffer (addr=0x%lx)", 
-            thread_idx, core_id, new_buf_ptr);
-    } else {
-        // No free buffer available, stop profiling
-        LOG_WARN("Thread %d: Core %d no free buffer available, stopping profiling", 
-            thread_idx, core_id);
-        state->current_buf_ptr = 0;
-        Handshake* h = &runtime->workers[core_id];
-        h->perf_records_addr = 0;
-        wmb();
-    }
+    LOG_INFO("Thread %d: Core %d switched to new buffer (addr=0x%lx)",
+        thread_idx, core_id, new_buf_ptr);
 }
 
 void perf_aicpu_flush_buffers(Runtime* runtime, 

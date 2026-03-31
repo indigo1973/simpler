@@ -90,21 +90,31 @@ constexpr int PLATFORM_PROF_BUFFER_SIZE = 1000;
  * Number of buffer slots per core/thread for dynamic profiling
  * Host dynamically allocates buffers and writes addresses into these slots.
  * Device reads slot addresses when switching buffers.
- * Using 8 slots (ring buffer) instead of 2 (double-buffer) to tolerate
- * Host-side latency in replacing full buffers.
+ * Using slots: provides full pipeline depth for buffer recycling.
+ * No runtime rtMalloc — all buffers are pre-allocated and recycled in a closed loop.
  */
-constexpr int PLATFORM_PROF_SLOT_COUNT = 8;
+constexpr int PLATFORM_PROF_SLOT_COUNT = 4;
+
+/**
+ * PerfBuffer pre-allocation count per AICore.
+ * 1 goes into the free_queue at init, the rest into the recycled pool.
+ */
+constexpr int PLATFORM_PROF_BUFFERS_PER_CORE = 8;
+
+/**
+ * PhaseBuffer pre-allocation count per AICPU thread.
+ * 1 goes into the free_queue at init, the rest into the recycled pool.
+ */
+constexpr int PLATFORM_PROF_BUFFERS_PER_THREAD = 16;
 
 /**
  * Ready queue capacity for performance data collection
  * Queue holds ReadyQueueEntry structs for buffers ready to be read by Host.
- * Includes both PerfRecord and PhaseRecord entries:
- *   PerfRecord: PLATFORM_MAX_CORES * PLATFORM_PROF_SLOT_COUNT
- *   Phase:      PLATFORM_MAX_AICPU_THREADS * PLATFORM_PROF_SLOT_COUNT
+ * Sized to match pre-allocation total across all cores and threads.
  */
 constexpr int PLATFORM_PROF_READYQUEUE_SIZE =
-    PLATFORM_MAX_CORES * PLATFORM_PROF_SLOT_COUNT
-    + PLATFORM_MAX_AICPU_THREADS * PLATFORM_PROF_SLOT_COUNT;  // 608
+    PLATFORM_MAX_CORES * PLATFORM_PROF_BUFFERS_PER_CORE
+    + PLATFORM_MAX_AICPU_THREADS * PLATFORM_PROF_BUFFERS_PER_THREAD;
 
 /**
  * System counter frequency (get_sys_cnt)

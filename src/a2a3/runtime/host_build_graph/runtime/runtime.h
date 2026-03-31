@@ -45,7 +45,7 @@
 #endif
 
 #ifndef RUNTIME_MAX_FANOUT
-#define RUNTIME_MAX_FANOUT 512
+#define RUNTIME_MAX_FANOUT 128
 #endif
 
 #ifndef RUNTIME_MAX_WORKER
