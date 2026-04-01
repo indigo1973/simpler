@@ -22,7 +22,7 @@
  * All kernels follow the same signature: void kernel(__gm__ int64_t* args)
  * This enables simple, switch-free dispatch.
  */
-typedef void (*UnifiedKernelFunc)(__gm__ int64_t*);
+typedef void (*UnifiedKernelFunc)(__gm__ int64_t *);
 
 /**
  * Execute task from PTO2DispatchPayload.
@@ -31,13 +31,13 @@ typedef void (*UnifiedKernelFunc)(__gm__ int64_t*);
  *
  * @param payload Pointer to PTO2DispatchPayload in global memory
  */
-__aicore__ __attribute__((always_inline)) static void execute_task(__gm__ PTO2DispatchPayload* payload) {
+__aicore__ __attribute__((always_inline)) static void execute_task(__gm__ PTO2DispatchPayload *payload) {
     if (payload == nullptr || payload->function_bin_addr == 0) {
         return;
     }
 
     UnifiedKernelFunc kernel = (UnifiedKernelFunc)payload->function_bin_addr;
-    kernel(reinterpret_cast<__gm__ int64_t*>(payload->args));
+    kernel(reinterpret_cast<__gm__ int64_t *>(payload->args));
     OUT_OF_ORDER_STORE_BARRIER();
 }
 
@@ -59,8 +59,8 @@ __aicore__ __attribute__((always_inline)) static void execute_task(__gm__ PTO2Di
  * @param block_idx Block index (core ID)
  * @param core_type Core type (AIC or AIV)
  */
-__aicore__ __attribute__((weak)) void aicore_execute(__gm__ Runtime* runtime, int block_idx, CoreType core_type) {
-    __gm__ Handshake* my_hank = (__gm__ Handshake*)(&runtime->workers[block_idx]);
+__aicore__ __attribute__((weak)) void aicore_execute(__gm__ Runtime *runtime, int block_idx, CoreType core_type) {
+    __gm__ Handshake *my_hank = (__gm__ Handshake *)(&runtime->workers[block_idx]);
 
     // Phase 1: Wait for AICPU initialization signal
     while (my_hank->aicpu_ready == 0) {
@@ -86,9 +86,11 @@ __aicore__ __attribute__((weak)) void aicore_execute(__gm__ Runtime* runtime, in
     dcci(my_hank, SINGLE_CACHE_LINE, CACHELINE_OUT);
 
     // Cache per-core dispatch payload pointer (set by AICPU before aicpu_ready)
-    __gm__ PTO2DispatchPayload* payload = reinterpret_cast<__gm__ PTO2DispatchPayload*>(my_hank->task);
+    __gm__ PTO2DispatchPayload *payload = reinterpret_cast<__gm__ PTO2DispatchPayload *>(my_hank->task);
 
+#if PTO2_PERF_TASK
     bool profiling_enabled = runtime->enable_profiling;
+#endif
 
     // Phase 4: Main execution loop - poll register for tasks until exit signal
     // Register encoding: AICPU_IDLE_TASK_ID=idle, task_id=task, AICORE_EXIT_SIGNAL=exit
@@ -117,18 +119,21 @@ __aicore__ __attribute__((weak)) void aicore_execute(__gm__ Runtime* runtime, in
 
             write_reg(RegId::COND, MAKE_ACK_VALUE(task_id));
 
-            // Performance profiling: record start time
-            uint64_t start_time = get_sys_cnt_aicore();
-
+            // Performance profiling: record task execution
+#if PTO2_PERF_TASK
+            if (profiling_enabled) {
+                uint64_t start_time = get_sys_cnt_aicore();
+                execute_task(payload);
+                uint64_t end_time = get_sys_cnt_aicore();
+                __gm__ PerfBuffer *perf_buf = (__gm__ PerfBuffer *)my_hank->perf_records_addr;
+                perf_aicore_record_task(perf_buf, task_id, start_time, end_time);
+            } else {
+                execute_task(payload);
+            }
+#else
             // Execute the task
             execute_task(payload);
-
-            // Performance profiling: record task execution
-            if (profiling_enabled) {
-                uint64_t end_time = get_sys_cnt_aicore();
-                __gm__ PerfBuffer* perf_buf = (__gm__ PerfBuffer*)my_hank->perf_records_addr;
-                perf_aicore_record_task(perf_buf, task_id, start_time, end_time);
-            }
+#endif
 
             last_reg_val = reg_val;
             write_reg(RegId::COND, MAKE_FIN_VALUE(task_id));

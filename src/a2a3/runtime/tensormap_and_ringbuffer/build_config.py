@@ -17,10 +17,31 @@
 # The "orchestration" directory contains source files compiled into both
 # runtime targets AND the orchestration .so (e.g., tensor methods needed
 # by the Tensor constructor's validation logic).
+#
+# Compile-time knobs
+# ------------------
+# PTO2_PERF_LEVEL  (default 2 via pto_runtime2_types.h #ifndef)
+#   Controls swimlane data-collection level, independent of PTO2_PROFILING.
+#   0 = no collection, 1 = task only (version=1 JSON), 2 = task+phase (version=2 JSON)
+#   Override via:  cmake -DPTO2_PERF_LEVEL=<0|1|2>  or  env PTO2_PERF_LEVEL=<0|1|2>
+#
+# PTO2_PROFILING   (default 1 via pto_runtime2_types.h #ifndef)
+#   Controls scheduler cycle-stat logging and orchestrator sub-step statistics.
+#   Independent of PTO2_PERF_LEVEL.
+
+import os
+
+_pto2_perf_level = int(os.environ.get("PTO2_PERF_LEVEL", "2"))
 
 BUILD_CONFIG = {
     "aicore": {"include_dirs": ["runtime", "common"], "source_dirs": ["aicore", "orchestration"]},
     "aicpu": {"include_dirs": ["runtime", "common"], "source_dirs": ["aicpu", "runtime", "orchestration"]},
     "host": {"include_dirs": ["runtime", "common"], "source_dirs": ["host", "runtime", "orchestration"]},
     "orchestration": {"include_dirs": ["runtime", "orchestration", "common"], "source_dirs": ["orchestration"]},
+    # cmake_defs: forwarded to cmake as -DKEY=VALUE for all targets.
+    # Requires CUSTOM_COMPILE_DEFS support in the platform CMakeLists.txt
+    # and corresponding gen_cmake_args() support in runtime_compiler.py.
+    "cmake_defs": {
+        "PTO2_PERF_LEVEL": _pto2_perf_level,
+    },
 }
