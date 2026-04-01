@@ -66,6 +66,22 @@
 #endif
 
 // =============================================================================
+// Compile-time perf richness (override with -DPTO2_PERF_LEVEL= at build time)
+//
+// 0 = No shared-memory task/phase perf; host must not allocate perf region or
+//     export swimlane JSON (device ignores recording even if enable_profiling is set).
+// 1 = Task-level PerfBuffer records (when runtime enable_profiling is true).
+// 2 = Level 1 plus phase/orchestrator extras for swimlane v2-style export.
+// =============================================================================
+#ifndef PTO2_PERF_LEVEL
+#define PTO2_PERF_LEVEL 0
+#endif
+
+#if PTO2_PERF_LEVEL < 0 || PTO2_PERF_LEVEL > 2
+#error "PTO2_PERF_LEVEL must be 0, 1, or 2"
+#endif
+
+// =============================================================================
 // PerfRecord - Single Task Execution Record
 // =============================================================================
 

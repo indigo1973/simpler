@@ -31,6 +31,7 @@
 
 #include <atomic>
 
+#include "common/perf_profiling.h"  // PTO2_PERF_LEVEL (see perf_profiling.h)
 #include "pto2_dispatch_payload.h"
 #include "pto_submit_types.h"
 #include "pto_types.h"
@@ -532,7 +533,9 @@ typedef void (*PTO2InCoreFunc)(void** args, int32_t num_args);
 
 #if PTO2_ORCH_PROFILING || PTO2_SCHED_PROFILING
 static inline void pto2_fanout_lock(PTO2TaskSlotState& slot_state, uint64_t& atomic_count, uint64_t& wait_cycle) {
+#if PTO2_PERF_LEVEL > 0
     uint64_t t0 = get_sys_cnt_aicpu();
+#endif
     bool contended = false;
     uint32_t atomic_ops = 0;
 
@@ -547,9 +550,11 @@ static inline void pto2_fanout_lock(PTO2TaskSlotState& slot_state, uint64_t& ato
                 expected, 1, std::memory_order_acquire, std::memory_order_relaxed)) {
             atomic_ops++;  // successful CAS = 1 atomic
             atomic_count += atomic_ops;
+#if PTO2_PERF_LEVEL > 0
             if (contended) {
                 wait_cycle += (get_sys_cnt_aicpu() - t0);
             }
+#endif
             return;
         }
         contended = true;

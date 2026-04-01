@@ -61,10 +61,9 @@ struct PTO2OrchestratorState {
     // In real mode, they communicate via shared memory only
     PTO2SchedulerState* scheduler;  // For simulated mode only
 #if PTO2_PROFILING
-    // Runtime profiling switch copied from Runtime::enable_profiling.
+    // Copied from Runtime::enable_profiling (swimlane export / shared-memory perf active).
     bool enable_profiling;
 #endif
-
     // === GM HEAP (for output buffers) ===
     void* gm_heap_base;    // Base address of GM heap
     uint64_t gm_heap_size;   // Total size of GM heap (all rings)

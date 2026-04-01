@@ -404,8 +404,13 @@ int DeviceRunner::run(Runtime& runtime,
 
     auto runtime_args_cleanup = RAIIScopeGuard([this]() { kernel_args_.finalize_runtime_args(); });
 
-    // Initialize performance profiling if enabled
-    if (runtime.enable_profiling) {
+    const bool host_swimlane_perf_active = runtime.enable_profiling && (PTO2_PERF_LEVEL > 0);
+    if (runtime.enable_profiling && !host_swimlane_perf_active) {
+        LOG_INFO("runtime.enable_profiling is set but PTO2_PERF_LEVEL=0: no perf buffers or swimlane export");
+    }
+
+    // Initialize performance profiling if enabled (requires compile-time PTO2_PERF_LEVEL > 0)
+    if (host_swimlane_perf_active) {
         rc = init_performance_profiling(runtime, num_aicore, device_id);
         if (rc != 0) {
             LOG_ERROR("init_performance_profiling failed: %d", rc);
@@ -458,12 +463,12 @@ int DeviceRunner::run(Runtime& runtime,
     {
         // Poll and collect performance data in a separate collector thread
         std::thread collector_thread;
-        if (runtime.enable_profiling) {
+        if (host_swimlane_perf_active) {
             collector_thread =
                 std::thread([this, &runtime]() { poll_and_collect_performance_data(runtime.get_task_count()); });
         }
         auto thread_guard = RAIIScopeGuard([&]() {
-            if (runtime.enable_profiling && collector_thread.joinable()) {
+            if (host_swimlane_perf_active && collector_thread.joinable()) {
                 collector_thread.join();
             }
         });
@@ -484,13 +489,13 @@ int DeviceRunner::run(Runtime& runtime,
         }
 
         // Signal collector that device execution is complete
-        if (runtime.enable_profiling) {
+        if (host_swimlane_perf_active) {
             perf_collector_.signal_execution_complete();
         }
     }
 
     // Stop memory management, drain remaining buffers, collect phase data, export
-    if (runtime.enable_profiling) {
+    if (host_swimlane_perf_active) {
         perf_collector_.stop_memory_manager();
         perf_collector_.drain_remaining_buffers();
         perf_collector_.scan_remaining_perf_buffers();

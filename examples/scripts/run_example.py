@@ -149,7 +149,10 @@ Golden.py interface:
     parser.add_argument(
         "--enable-profiling",
         action="store_true",
-        help="Enable profiling and generate swimlane.json",
+        help=(
+            "Enable runtime.enable_profiling (host allocates perf region when PTO2_PERF_LEVEL>0). "
+            "Swimlane JSON is skipped when env PTO2_PERF_LEVEL is 0 (must match compile-time -DPTO2_PERF_LEVEL)."
+        ),
     )
 
     parser.add_argument(
@@ -282,8 +285,18 @@ Golden.py interface:
         logger.info("TEST PASSED")
         logger.info("=" * 60)
 
-        # If profiling was enabled, generate merged swimlane JSON
-        if args.enable_profiling:
+        # If profiling was enabled, generate merged swimlane JSON (requires PTO2_PERF_LEVEL>0 in build)
+        swimlane_env = os.environ.get("PTO2_PERF_LEVEL", "1")
+        try:
+            swimlane_level = int(swimlane_env)
+        except ValueError:
+            swimlane_level = 1
+        if args.enable_profiling and swimlane_level <= 0:
+            logger.info(
+                "Skipping swimlane JSON: PTO2_PERF_LEVEL=%s (set env to match build; 0 means no swimlane export)",
+                swimlane_env,
+            )
+        elif args.enable_profiling:
             logger.info("Generating swimlane visualization...")
             kernel_config_path = kernels_path / "kernel_config.py"
             swimlane_script = project_root / "tools" / "swimlane_converter.py"

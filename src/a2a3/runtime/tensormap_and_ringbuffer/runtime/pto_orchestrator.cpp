@@ -72,6 +72,7 @@ uint64_t g_orch_args_atomic_count = 0;
 uint64_t g_orch_fanin_atomic_count = 0;
 uint64_t g_orch_finalize_atomic_count = 0;
 uint64_t g_orch_scope_end_atomic_count = 0;
+#if PTO2_PERF_LEVEL > 0
 #define CYCLE_COUNT_START() uint64_t _t0 = get_sys_cnt_aicpu(), _t1
 #define CYCLE_COUNT_LAP(acc)       \
     do {                           \
@@ -86,6 +87,11 @@ uint64_t g_orch_scope_end_atomic_count = 0;
         perf_aicpu_record_orch_phase((phase_id), _t0, _t1, g_orch_submit_idx, (tid)); \
         _t0 = _t1;                                                                    \
     } while (0)
+#else
+#define CYCLE_COUNT_START()
+#define CYCLE_COUNT_LAP(acc)
+#define CYCLE_COUNT_LAP_RECORD(acc, phase_id, tid)
+#endif
 #elif PTO2_PROFILING
 #include "aicpu/device_time.h"
 #include "aicpu/performance_collector_aicpu.h"
@@ -94,15 +100,14 @@ __attribute__((weak, visibility("hidden"))) void perf_aicpu_record_orch_phase(
     AicpuPhaseId, uint64_t, uint64_t, uint32_t, uint64_t) {}
 // submit_idx needed for swimlane task_id tagging (no cycle accumulation at this level)
 static uint32_t g_orch_submit_idx = 0;
-#define CYCLE_COUNT_START()                     \
-    bool _prof_active = orch->enable_profiling; \
-    uint64_t _t0 = _prof_active ? get_sys_cnt_aicpu() : 0, _t1 = 0
+#define CYCLE_COUNT_START() \
+    uint64_t _t0 = ((PTO2_PERF_LEVEL >= 2) && orch->enable_profiling) ? get_sys_cnt_aicpu() : 0, _t1 = 0
 #define CYCLE_COUNT_LAP(acc) \
     do {                     \
     } while (0)
 #define CYCLE_COUNT_LAP_RECORD(acc, phase_id, tid)                                        \
     do {                                                                                  \
-        if (_prof_active) {                                                               \
+        if ((PTO2_PERF_LEVEL >= 2) && orch->enable_profiling) {                           \
             _t1 = get_sys_cnt_aicpu();                                                    \
             perf_aicpu_record_orch_phase((phase_id), _t0, _t1, g_orch_submit_idx, (tid)); \
             _t0 = _t1;                                                                    \
@@ -243,7 +248,9 @@ void pto2_scope_end(PTO2OrchestratorState* orch) {
     assert(orch->scope_stack_top >= 0 && "Scope stack underflow");
 
 #if PTO2_ORCH_PROFILING
+#if PTO2_PERF_LEVEL > 0
     uint64_t _se0 = get_sys_cnt_aicpu();
+#endif
 #endif
 
     int32_t begin = orch->scope_begins[orch->scope_stack_top--];
@@ -257,9 +264,11 @@ void pto2_scope_end(PTO2OrchestratorState* orch) {
     orch->scope_tasks_size = begin;
 
 #if PTO2_ORCH_PROFILING
+#if PTO2_PERF_LEVEL > 0
     uint64_t _se1 = get_sys_cnt_aicpu();
     g_orch_scope_end_cycle += (_se1 - _se0);
     // perf_aicpu_record_orch_phase(AicpuPhaseId::ORCH_SCOPE_END, _se0, _se1, g_orch_submit_idx, -1);
+#endif
 #endif
 }
 

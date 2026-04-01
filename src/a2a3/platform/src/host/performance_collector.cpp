@@ -126,8 +126,8 @@ void* ProfMemoryManager::alloc_and_register(size_t size, void** host_ptr_out) {
     void* dev_ptr = alloc_cb_(size, user_data_);
     if (dev_ptr == nullptr) {
         const char* hint = (size == sizeof(PerfBuffer))
-            ? "increase PLATFORM_PROF_BUFFERS_PER_CORE to reduce profiling data loss"
-            : "increase PLATFORM_PROF_BUFFERS_PER_THREAD to reduce profiling data loss";
+                               ? "increase PLATFORM_PROF_BUFFERS_PER_CORE to reduce profiling data loss"
+                               : "increase PLATFORM_PROF_BUFFERS_PER_THREAD to reduce profiling data loss";
         LOG_WARN("ProfMemoryManager: alloc failed for %zu bytes, %s", size, hint);
         *host_ptr_out = nullptr;
         return nullptr;
@@ -545,6 +545,11 @@ int PerformanceCollector::initialize(Runtime& runtime,
         return -1;
     }
 
+#if PTO2_PERF_LEVEL == 0
+    LOG_INFO("PTO2_PERF_LEVEL=0: skipping shared-memory perf allocation (no swimlane data)");
+    return 0;
+#endif
+
     LOG_INFO("Initializing performance profiling");
 
     if (num_aicore <= 0 || num_aicore > PLATFORM_MAX_CORES) {
@@ -646,7 +651,8 @@ int PerformanceCollector::initialize(Runtime& runtime,
         wmb();
     }
     LOG_DEBUG("Initialized %d PerfBufferStates: 1 buffer/core, %d in recycled pool",
-        num_aicore, num_aicore * (PLATFORM_PROF_BUFFERS_PER_CORE - 1));
+        num_aicore,
+        num_aicore * (PLATFORM_PROF_BUFFERS_PER_CORE - 1));
 
     // Step 6: Initialize PhaseBufferStates — 1 buffer per thread in free_queue, rest to recycled pool
     for (int t = 0; t < num_phase_threads; t++) {
@@ -680,7 +686,8 @@ int PerformanceCollector::initialize(Runtime& runtime,
         wmb();
     }
     LOG_DEBUG("Initialized %d PhaseBufferStates: 1 buffer/thread, %d in recycled pool",
-        num_phase_threads, num_phase_threads * (PLATFORM_PROF_BUFFERS_PER_THREAD - 1));
+        num_phase_threads,
+        num_phase_threads * (PLATFORM_PROF_BUFFERS_PER_THREAD - 1));
 
     wmb();
 
@@ -716,9 +723,7 @@ void PerformanceCollector::stop_memory_manager() {
     }
 }
 
-void PerformanceCollector::signal_execution_complete() {
-    execution_complete_.store(true);
-}
+void PerformanceCollector::signal_execution_complete() { execution_complete_.store(true); }
 
 void PerformanceCollector::poll_and_collect(int expected_tasks) {
     if (perf_shared_mem_host_ == nullptr) {
@@ -906,7 +911,8 @@ void PerformanceCollector::poll_and_collect(int expected_tasks) {
                     buffers_processed++;
                 }
                 LOG_INFO("Execution complete signal received, exiting with %d/%d records",
-                    total_records_collected, expected_tasks);
+                    total_records_collected,
+                    expected_tasks);
                 break;
             }
             if (!idle_start.has_value()) {
@@ -1014,7 +1020,8 @@ void PerformanceCollector::scan_remaining_perf_buffers() {
         void* host_ptr = memory_manager_.resolve_host_ptr(reinterpret_cast<void*>(buf_ptr));
         if (host_ptr == nullptr) {
             LOG_ERROR("scan_remaining_perf_buffers: no host mapping for dev_ptr=%p (core %d)",
-                reinterpret_cast<void*>(buf_ptr), core_index);
+                reinterpret_cast<void*>(buf_ptr),
+                core_index);
             continue;
         }
 
@@ -1152,6 +1159,11 @@ void PerformanceCollector::collect_phase_data() {
 }
 
 int PerformanceCollector::export_swimlane_json(const std::string& output_path) {
+#if PTO2_PERF_LEVEL == 0
+    (void)output_path;
+    LOG_INFO("PTO2_PERF_LEVEL=0: swimlane export disabled at compile time");
+    return -1;
+#endif
     // Step 1: Validate collected data
     bool has_any_records = false;
     for (const auto& core_records : collected_perf_records_) {

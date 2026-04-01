@@ -4,7 +4,7 @@ This document describes the profiling macro hierarchy and logging control in the
 
 ## Overview
 
-PTO Runtime2 uses a hierarchical profiling system with compile-time macros to control profiling code compilation and log output. The `enable_profiling` runtime flag controls data collection (performance buffers, shared memory writes) but does NOT control log output.
+PTO Runtime2 uses compile-time macros for **which profiling code is compiled** (including the `PTO2_PERF_LEVEL` cap on shared-memory task vs phase records). The runtime flag **`enable_profiling`** (set from host / CLI `--enable-profiling`) controls whether perf buffers are used and whether the host exports merged **swimlane JSON**; it does **not** control device log lines (those follow the macros above).
 
 ## Profiling Macro Hierarchy
 
@@ -13,7 +13,8 @@ PTO2_PROFILING (base level, default=1)
 ├── PTO2_ORCH_PROFILING (orchestrator, default=0, requires PTO2_PROFILING=1)
 |   └──PTO2_TENSORMAP_PROFILING (tensormap, default=0, requires PTO2_ORCH_PROFILING=1)
 ├── PTO2_SCHED_PROFILING (scheduler, default=0, requires PTO2_PROFILING=1)
-└── --enable-profiling (Dump profiling merged swimlane json file for visualization, requires PTO2_PROFILING=1)
+├── PTO2_PERF_LEVEL (compile: 1=task perf only, 2=+phase/orch; requires PTO2_PROFILING=1)
+└── enable_profiling / CLI --enable-profiling (runtime: host perf buffers + swimlane JSON; device writes shared memory when true)
 
 ```
 
@@ -48,7 +49,7 @@ Each sub-level macro requires `PTO2_PROFILING=1`:
 **What's NOT compiled:**
 - All `CYCLE_COUNT_*` timing counters (`sched_*_cycle`, orchestrator cost counters)
 - Scheduler/Orchestrator profiling summary logs guarded by `#if PTO2_PROFILING`
-- Performance data collection paths (`enable_profiling` runtime flag becomes ineffective because profiling code is not compiled)
+- Performance data collection paths (`PTO2_PERF_LEVEL` / `enable_profiling` have no effect because profiling code is not compiled)
 
 **Log output (normal run, no stall):**
 - No `sched_start/sched_end/sched_cost` timestamps
@@ -115,7 +116,7 @@ Thread 1: Scheduler summary: total_time=168.620us, loops=3880, tasks_scheduled=9
 
 **Note:**
 - All logs above are controlled by compile-time macro `PTO2_PROFILING`, not by `enable_profiling`.
-- `enable_profiling` only controls shared-memory data collection / swimlane export.
+- `enable_profiling` only controls shared-memory data collection / swimlane export (and which perf init runs on device).
 - Enable `orch_to_sched_` via environment variable: `PTO2_ORCH_TO_SCHED=1`.
 
 ---
@@ -184,7 +185,7 @@ Thread X:   scope_end      : XXXus  atomics=XXX
 Thread X:   avg/task       : XXXus
 ```
 
-**Note:** Orchestrator logs always print when `PTO2_ORCH_PROFILING=1`, regardless of `enable_profiling` flag.
+**Note:** Orchestrator logs always print when `PTO2_ORCH_PROFILING=1`, regardless of `enable_profiling`.
 
 ---
 
@@ -210,24 +211,28 @@ Thread X:   overlap checks : XXX, hits=XXX (XX.X%)
 
 ---
 
-## Runtime Flag: enable_profiling
+## Compile macro: `PTO2_PERF_LEVEL` (a2a3 tensormap_and_ringbuffer)
 
-The `runtime->enable_profiling` flag controls **data collection**, NOT log output.
+When `PTO2_PROFILING=1`, this macro caps **what shared-memory perf the device can record** (code paths must be compiled in):
 
-### When enable_profiling=true:
-- Performance buffers are allocated and written
-- Per-task timing data is collected
-- Phase profiling data is recorded
-- Orchestrator summary is written to shared memory
+| `PTO2_PERF_LEVEL` | Shared-memory task records | Phase / orch extras (`aicpu_scheduler_phases`, orch phase records, etc.) |
+|-------------------|:----------------------------:|--------------------------------------------------------------------------|
+| 0 | No — no PerfBuffer/phase SM perf; host does not allocate perf region or export swimlane | No |
+| 1 | Yes (when `enable_profiling`) | No (not compiled) |
+| 2 | Yes (when `enable_profiling`) | Yes (when `enable_profiling`) |
 
-### When enable_profiling=false:
-- No performance data collection
-- No shared memory writes
-- Logs still print (controlled by macros only)
+Swimlane JSON **version** (v1 vs v2) follows whether phase data is present in the export pipeline (typically v2 when level-2 phase data is compiled **and** collected with `enable_profiling`).
+
+> 若开启 `PTO2_ORCH_PROFILING=1`，`CYCLE_COUNT_LAP_RECORD` 在 ORCH 路径上可能为 weak no-op；orch per-task 阶段是否写入共享内存仍受 `PTO2_PERF_LEVEL` 与 `enable_profiling` 约束。
+
+## Runtime flag: `enable_profiling` / `--enable-profiling`
+
+- **Host**: allocates perf region, runs collector, and (via `run_example.py`) invokes swimlane merge when the CLI flag is set.
+- **Device (AICPU/AICore)**: when false, skips `perf_aicpu_init_*`, task/phase writes, and orchestrator phase timing that feeds shared memory.
 
 ### Usage:
 ```cpp
-// Initialize runtime with profiling enabled
+// Set via C API (python/bindings.py -> enable_runtime_profiling)
 runtime->enable_profiling = true;
 ```
 
@@ -316,15 +321,14 @@ add_definitions(-DPTO2_ORCH_PROFILING=1)
    - `#if PTO2_PROFILING` controls whether profiling code is compiled
    - Logs print when macro is enabled, regardless of runtime flag
 
-2. **Runtime flag controls data collection**
-   - `enable_profiling` controls performance buffer allocation
-   - Controls shared memory writes for host-side export
+2. **Runtime flag controls swimlane / shared-memory export**
+   - `enable_profiling` gates host perf setup and device writes to perf buffers
    - Does NOT control log output
 
 3. **Consistent behavior across components**
    - Scheduler logs: macro-controlled only
    - Orchestrator logs: macro-controlled only
-   - Data collection: runtime flag controlled
+   - Shared-memory perf shape: `PTO2_PERF_LEVEL` (compile) + `enable_profiling` (runtime)
 
 ### Code Locations
 
@@ -344,7 +348,7 @@ add_definitions(-DPTO2_ORCH_PROFILING=1)
 
 ### Runtime overhead:
 - Logging: Negligible (device logs are asynchronous)
-- Data collection (`enable_profiling=true`): Low to moderate
+- Data collection (`enable_profiling` with `PTO2_PERF_LEVEL` ≥ 1): Low to moderate
   - Performance buffer writes
   - Shared memory updates
   - Per-task timing measurements

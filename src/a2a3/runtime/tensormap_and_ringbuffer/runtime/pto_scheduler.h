@@ -38,6 +38,7 @@
 
 #if PTO2_SCHED_PROFILING
 #include "aicpu/device_time.h"
+#if PTO2_PERF_LEVEL > 0
 #define PTO2_SCHED_CYCLE_START() uint64_t _st0 = get_sys_cnt_aicpu(), _st1
 #define PTO2_SCHED_CYCLE_LAP(acc)   \
     do {                            \
@@ -45,6 +46,10 @@
         acc += (_st1 - _st0);       \
         _st0 = _st1;                \
     } while (0)
+#else
+#define PTO2_SCHED_CYCLE_START()
+#define PTO2_SCHED_CYCLE_LAP(acc)
+#endif
 #endif
 
 // =============================================================================
@@ -184,7 +189,9 @@ struct alignas(64) PTO2ReadyQueue {
     bool push(PTO2TaskSlotState* slot_state, uint64_t& atomic_count, uint64_t& wait_cycle) {
         uint64_t pos;
         PTO2ReadyQueueSlot* slot;
+#if PTO2_PERF_LEVEL > 0
         uint64_t t0 = get_sys_cnt_aicpu();
+#endif
         bool contended = false;
         uint32_t atomic_ops = 0;
         while (true) {
@@ -209,9 +216,11 @@ struct alignas(64) PTO2ReadyQueue {
         }
         atomic_ops++;  // final sequence.store
         atomic_count += atomic_ops;
+#if PTO2_PERF_LEVEL > 0
         if (contended) {
             wait_cycle += (get_sys_cnt_aicpu() - t0);
         }
+#endif
 
         slot->slot_state = slot_state;
         slot->sequence.store(static_cast<int64_t>(pos + 1), std::memory_order_release);
@@ -260,7 +269,9 @@ struct alignas(64) PTO2ReadyQueue {
 
         uint64_t pos;
         PTO2ReadyQueueSlot* slot;
+#if PTO2_PERF_LEVEL > 0
         uint64_t t0 = get_sys_cnt_aicpu();
+#endif
         bool contended = false;
         uint32_t atomic_ops = 0;
         while (true) {
@@ -286,9 +297,11 @@ struct alignas(64) PTO2ReadyQueue {
         }
         atomic_ops++;  // final sequence.store
         atomic_count += atomic_ops;
+#if PTO2_PERF_LEVEL > 0
         if (contended) {
             wait_cycle += (get_sys_cnt_aicpu() - t0);
         }
+#endif
 
         PTO2TaskSlotState* result = slot->slot_state;
         slot->sequence.store(static_cast<int64_t>(pos + mask + 1), std::memory_order_release);
@@ -338,7 +351,9 @@ struct alignas(64) PTO2ReadyQueue {
     int pop_batch(PTO2TaskSlotState** out, int max_count, uint64_t& atomic_count, uint64_t& wait_cycle) {
         uint64_t pos;
         int count;
+#if PTO2_PERF_LEVEL > 0
         uint64_t t0 = get_sys_cnt_aicpu();
+#endif
         bool contended = false;
         uint32_t atomic_ops = 0;
         while (true) {
@@ -384,9 +399,11 @@ struct alignas(64) PTO2ReadyQueue {
             atomic_ops++;  // sequence.store
         }
         atomic_count += atomic_ops;
+#if PTO2_PERF_LEVEL > 0
         if (contended) {
             wait_cycle += (get_sys_cnt_aicpu() - t0);
         }
+#endif
         return count;
     }
 #endif

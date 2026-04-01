@@ -38,6 +38,7 @@
 #include "common/perf_profiling.h"
 #include "common/platform_config.h"
 #include "pto2_dispatch_payload.h"
+#include "pto_runtime2_types.h"
 #include "task_args.h"
 
 // =============================================================================
@@ -170,8 +171,10 @@ class Runtime {
     // NOTE: Made public for direct access from aicore code
     uint64_t func_id_to_addr_[RUNTIME_MAX_FUNC_ID];
 
-    // Profiling support
-    bool enable_profiling;  // Enable profiling flag
+    // When true (e.g. CLI --enable-profiling): host may allocate perf buffers and export swimlane JSON.
+    // If compile-time PTO2_PERF_LEVEL==0, no shared-memory perf or swimlane export occurs regardless of this flag.
+    // When PTO2_PERF_LEVEL>0, device-side *what* is recorded is still capped by level (1=tasks, 2=+phases).
+    bool enable_profiling;
 
     // Orchestrator-to-scheduler transition control
     // When true, orchestrator threads convert to scheduler threads after orchestration completes.

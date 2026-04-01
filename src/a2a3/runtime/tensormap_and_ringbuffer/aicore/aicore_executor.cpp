@@ -87,7 +87,7 @@ __aicore__ __attribute__((weak)) void aicore_execute(__gm__ Runtime* runtime, in
     // Cache per-core dispatch payload pointer (set by AICPU before aicpu_ready)
     __gm__ PTO2DispatchPayload* payload = reinterpret_cast<__gm__ PTO2DispatchPayload*>(my_hank->task);
 
-    bool profiling_enabled = runtime->enable_profiling;
+    bool profiling_enabled = runtime->enable_profiling && (PTO2_PERF_LEVEL > 0);
 
     // Phase 4: Main execution loop - poll register for tasks until exit signal
     // Register encoding: AICPU_IDLE_TASK_ID=idle, task_id=task, AICORE_EXIT_SIGNAL=exit
@@ -116,17 +116,21 @@ __aicore__ __attribute__((weak)) void aicore_execute(__gm__ Runtime* runtime, in
 
             write_reg(RegId::COND, MAKE_ACK_VALUE(task_id));
 
-            // Performance profiling: record start time
+            // Performance profiling: record start/end (get_sys_cnt only when compile-time perf level > 0)
+#if PTO2_PERF_LEVEL > 0
             uint64_t start_time = get_sys_cnt_aicore();
+#endif
 
             // Execute the task
             execute_task(payload);
 
             // Performance profiling: record task execution
             if (profiling_enabled) {
+#if PTO2_PERF_LEVEL > 0
                 uint64_t end_time = get_sys_cnt_aicore();
                 __gm__ PerfBuffer* perf_buf = (__gm__ PerfBuffer*)my_hank->perf_records_addr;
                 perf_aicore_record_task(perf_buf, task_id, start_time, end_time);
+#endif
             }
 
             last_reg_val = reg_val;
