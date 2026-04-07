@@ -196,6 +196,12 @@ Golden.py interface:
     )
 
     parser.add_argument(
+        "--no-swimlane",
+        action="store_true",
+        help="Skip swimlane JSON generation even when --enable-profiling is set",
+    )
+
+    parser.add_argument(
         "--build",
         action="store_true",
         help="Compile runtime from source instead of using pre-built binaries",
@@ -283,7 +289,7 @@ Golden.py interface:
         logger.info("=" * 60)
 
         # If profiling was enabled, generate merged swimlane JSON
-        if args.enable_profiling:
+        if args.enable_profiling and not args.no_swimlane:
             logger.info("Generating swimlane visualization...")
             kernel_config_path = kernels_path / "kernel_config.py"
             swimlane_script = project_root / "tools" / "swimlane_converter.py"

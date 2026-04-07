@@ -153,8 +153,8 @@ public:
      */
     void start(
         void *shared_mem_host, int num_cores, int num_phase_threads, PerfAllocCallback alloc_cb,
-        PerfRegisterCallback register_cb, PerfFreeCallback free_cb, void *user_data, int device_id,
-        PerfSetDeviceCallback set_device_cb = nullptr
+        PerfRegisterCallback register_cb, PerfUnregisterCallback unregister_cb, PerfFreeCallback free_cb,
+        void *user_data, int device_id, PerfSetDeviceCallback set_device_cb = nullptr
     );
 
     /**
@@ -204,6 +204,7 @@ private:
     // Callbacks
     PerfAllocCallback alloc_cb_{nullptr};
     PerfRegisterCallback register_cb_{nullptr};
+    PerfUnregisterCallback unregister_cb_{nullptr};
     PerfFreeCallback free_cb_{nullptr};
     PerfSetDeviceCallback set_device_cb_{nullptr};
     void *user_data_{nullptr};
@@ -279,6 +280,7 @@ public:
      * @param device_id Device ID
      * @param alloc_cb Memory allocation callback
      * @param register_cb Memory registration callback (can be nullptr for simulation)
+     * @param unregister_cb Memory unregistration callback (can be nullptr for simulation)
      * @param free_cb Memory free callback
      * @param user_data User-provided context pointer passed to callbacks
      * @param set_device_cb Device context setup callback (nullptr to skip)
@@ -286,7 +288,8 @@ public:
      */
     int initialize(
         Runtime &runtime, int num_aicore, int device_id, PerfAllocCallback alloc_cb, PerfRegisterCallback register_cb,
-        PerfFreeCallback free_cb, void *user_data, PerfSetDeviceCallback set_device_cb = nullptr
+        PerfUnregisterCallback unregister_cb, PerfFreeCallback free_cb, void *user_data,
+        PerfSetDeviceCallback set_device_cb = nullptr
     );
 
     /**
@@ -390,6 +393,7 @@ private:
     // Callbacks (stored for memory manager)
     PerfAllocCallback alloc_cb_{nullptr};
     PerfRegisterCallback register_cb_{nullptr};
+    PerfUnregisterCallback unregister_cb_{nullptr};
     PerfFreeCallback free_cb_{nullptr};
     PerfSetDeviceCallback set_device_cb_{nullptr};
     void *user_data_{nullptr};
@@ -404,6 +408,7 @@ private:
     std::vector<std::vector<AicpuPhaseRecord>> collected_phase_records_;
     AicpuOrchSummary collected_orch_summary_{};
     bool has_phase_data_{false};
+    uint32_t swimlane_format_level_{2};  // From PerfDataHeader (device); default 2
 
     // Core-to-thread mapping (core_id → scheduler thread index, -1 = unassigned)
     std::vector<int8_t> core_to_thread_;

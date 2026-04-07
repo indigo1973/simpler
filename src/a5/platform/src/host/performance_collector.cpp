@@ -153,10 +153,14 @@ void *ProfMemoryManager::alloc_and_register(size_t size, void **host_ptr_out) {
 }
 
 void ProfMemoryManager::free_buffer(void *dev_ptr) {
-    if (dev_ptr != nullptr && free_cb_ != nullptr) {
-        dev_to_host_.erase(dev_ptr);
-        free_cb_(dev_ptr, user_data_);
+    if (dev_ptr == nullptr || free_cb_ == nullptr) {
+        return;
     }
+    auto it = dev_to_host_.find(dev_ptr);
+    if (it != dev_to_host_.end()) {
+        dev_to_host_.erase(it);
+    }
+    free_cb_(dev_ptr, user_data_);
 }
 
 void *ProfMemoryManager::resolve_host_ptr(void *dev_ptr) {
@@ -615,6 +619,7 @@ int PerformanceCollector::initialize(
 
     header->num_cores = num_aicore;
     header->total_tasks = 0;
+    header->swimlane_format_level = 0;
 
     LOG_DEBUG("Initialized PerfDataHeader:");
     LOG_DEBUG("  num_cores:        %d", header->num_cores);
@@ -735,6 +740,11 @@ void PerformanceCollector::poll_and_collect(int expected_tasks) {
     LOG_INFO("Collecting performance data");
 
     PerfDataHeader *header = get_perf_header(perf_shared_mem_host_);
+    rmb();
+    {
+        uint32_t raw_fmt = header->swimlane_format_level;
+        swimlane_format_level_ = (raw_fmt <= 2) ? raw_fmt : 2u;
+    }
 
     const auto timeout_duration = std::chrono::seconds(PLATFORM_PROF_TIMEOUT_SECONDS);
     std::optional<std::chrono::steady_clock::time_point> idle_start;
@@ -1210,19 +1220,28 @@ int PerformanceCollector::export_swimlane_json(const std::string &output_path) {
         return a.record->task_id < b.record->task_id;
     });
 
+    int json_version = static_cast<int>(swimlane_format_level_);
+    if (json_version < 0 || json_version > 2) {
+        json_version = 2;
+    }
+    if (has_phase_data_ && json_version < 2) {
+        json_version = 2;
+    }
+
     // Step 4: Calculate base time (minimum timestamp across all records)
     uint64_t base_time_cycles = UINT64_MAX;
     for (const auto &tagged : tagged_records) {
         if (tagged.record->start_time < base_time_cycles) {
             base_time_cycles = tagged.record->start_time;
         }
-        if (tagged.record->dispatch_time > 0 && tagged.record->dispatch_time < base_time_cycles) {
+        if (json_version >= 1 && tagged.record->dispatch_time > 0 &&
+            tagged.record->dispatch_time < base_time_cycles) {
             base_time_cycles = tagged.record->dispatch_time;
         }
     }
 
-    // Include phase record timestamps in base_time calculation
-    if (has_phase_data_) {
+    // Include phase record timestamps in base_time calculation (full swimlane only)
+    if (has_phase_data_ && json_version >= 2) {
         for (const auto &thread_records : collected_phase_records_) {
             for (const auto &pr : thread_records) {
                 if (pr.start_time > 0 && pr.start_time < base_time_cycles) {
@@ -1251,7 +1270,7 @@ int PerformanceCollector::export_swimlane_json(const std::string &output_path) {
     }
 
     // Step 7: Write JSON data
-    int version = has_phase_data_ ? 2 : 1;
+    const int version = json_version;
     outfile << "{\n";
     outfile << "  \"version\": " << version << ",\n";
     outfile << "  \"tasks\": [\n";
@@ -1278,19 +1297,24 @@ int PerformanceCollector::export_swimlane_json(const std::string &output_path) {
         outfile << "      \"start_time_us\": " << std::fixed << std::setprecision(3) << start_us << ",\n";
         outfile << "      \"end_time_us\": " << std::fixed << std::setprecision(3) << end_us << ",\n";
         outfile << "      \"duration_us\": " << std::fixed << std::setprecision(3) << duration_us << ",\n";
-        outfile << "      \"dispatch_time_us\": " << std::fixed << std::setprecision(3) << dispatch_us << ",\n";
-        outfile << "      \"finish_time_us\": " << std::fixed << std::setprecision(3) << finish_us << ",\n";
+        if (version >= 1) {
+            outfile << "      \"dispatch_time_us\": " << std::fixed << std::setprecision(3) << dispatch_us << ",\n";
+            outfile << "      \"finish_time_us\": " << std::fixed << std::setprecision(3) << finish_us << ",\n";
+        }
         outfile << "      \"fanout\": [";
-        int safe_fanout_count =
-            (record.fanout_count >= 0 && record.fanout_count <= RUNTIME_MAX_FANOUT) ? record.fanout_count : 0;
-        for (int j = 0; j < safe_fanout_count; ++j) {
-            outfile << record.fanout[j];
-            if (j < safe_fanout_count - 1) {
-                outfile << ", ";
+        int safe_fanout_count = 0;
+        if (version >= 1) {
+            safe_fanout_count =
+                (record.fanout_count >= 0 && record.fanout_count <= RUNTIME_MAX_FANOUT) ? record.fanout_count : 0;
+            for (int j = 0; j < safe_fanout_count; ++j) {
+                outfile << record.fanout[j];
+                if (j < safe_fanout_count - 1) {
+                    outfile << ", ";
+                }
             }
         }
         outfile << "],\n";
-        outfile << "      \"fanout_count\": " << record.fanout_count << "\n";
+        outfile << "      \"fanout_count\": " << (version >= 1 ? record.fanout_count : 0) << "\n";
         outfile << "    }";
         if (i < tagged_records.size() - 1) {
             outfile << ",";
@@ -1299,8 +1323,8 @@ int PerformanceCollector::export_swimlane_json(const std::string &output_path) {
     }
     outfile << "  ]";
 
-    // Step 8: Write phase profiling data (version 2)
-    if (has_phase_data_) {
+    // Step 8: Write phase profiling data (full swimlane only)
+    if (has_phase_data_ && version >= 2) {
         auto sched_phase_name = [](AicpuPhaseId id) -> const char * {
             switch (id) {
             case AicpuPhaseId::SCHED_COMPLETE:
@@ -1471,19 +1495,17 @@ int PerformanceCollector::finalize(PerfUnregisterCallback unregister_cb, PerfFre
     for (int i = 0; i < num_aicore_; i++) {
         PerfBufferState *state = get_perf_buffer_state(perf_shared_mem_host_, i);
 
-        // Free current buffer if any
-        if (state->current_buf_ptr != 0 && free_cb != nullptr) {
+        if (state->current_buf_ptr != 0) {
             free_cb(reinterpret_cast<void *>(state->current_buf_ptr), user_data);
         }
 
-        // Free all buffers in free_queue (limit iterations to max capacity)
         rmb();
         uint32_t head = state->free_queue.head;
         uint32_t tail = state->free_queue.tail;
         uint32_t max_iters = PLATFORM_PROF_SLOT_COUNT;
         while (head != tail && max_iters-- > 0) {
             uint64_t buf_ptr = state->free_queue.buffer_ptrs[head % PLATFORM_PROF_SLOT_COUNT];
-            if (buf_ptr != 0 && free_cb != nullptr) {
+            if (buf_ptr != 0) {
                 free_cb(reinterpret_cast<void *>(buf_ptr), user_data);
             }
             head++;
@@ -1497,19 +1519,17 @@ int PerformanceCollector::finalize(PerfUnregisterCallback unregister_cb, PerfFre
     for (int t = 0; t < num_phase_threads; t++) {
         PhaseBufferState *state = get_phase_buffer_state(perf_shared_mem_host_, num_aicore_, t);
 
-        // Free current buffer if any
-        if (state->current_buf_ptr != 0 && free_cb != nullptr) {
+        if (state->current_buf_ptr != 0) {
             free_cb(reinterpret_cast<void *>(state->current_buf_ptr), user_data);
         }
 
-        // Free all buffers in free_queue (limit iterations to max capacity)
         rmb();
         uint32_t head = state->free_queue.head;
         uint32_t tail = state->free_queue.tail;
         uint32_t max_iters = PLATFORM_PROF_SLOT_COUNT;
         while (head != tail && max_iters-- > 0) {
             uint64_t buf_ptr = state->free_queue.buffer_ptrs[head % PLATFORM_PROF_SLOT_COUNT];
-            if (buf_ptr != 0 && free_cb != nullptr) {
+            if (buf_ptr != 0) {
                 free_cb(reinterpret_cast<void *>(buf_ptr), user_data);
             }
             head++;
@@ -1519,7 +1539,6 @@ int PerformanceCollector::finalize(PerfUnregisterCallback unregister_cb, PerfFre
         }
     }
 
-    // Unregister host mapping (optional)
     if (unregister_cb != nullptr && was_registered_) {
         int rc = unregister_cb(perf_shared_mem_dev_, device_id_, user_data);
         if (rc != 0) {

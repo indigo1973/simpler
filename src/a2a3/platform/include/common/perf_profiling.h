@@ -226,6 +226,8 @@ struct PerfDataHeader {
     // Metadata (Host initializes, Device read-only)
     uint32_t num_cores;             // Actual number of cores launched
     volatile uint32_t total_tasks;  // Total tasks (AICPU writes after orchestration)
+    // Host sets default 2 before launch; AICPU overwrites in perf_aicpu_init_profiling to match build (0/1/2).
+    uint32_t swimlane_format_level;  // Exported JSON "version" semantics for downstream tools
 } __attribute__((aligned(64)));
 
 // =============================================================================

@@ -103,8 +103,8 @@ def read_perf_data(filepath):
             raise ValueError(f"Missing required field: {field}")
 
     # Validate version
-    if data["version"] not in [1, 2]:
-        raise ValueError(f"Unsupported version: {data['version']} (expected 1 or 2)")
+    if data["version"] not in [0, 1, 2]:
+        raise ValueError(f"Unsupported version: {data['version']} (expected 0, 1 or 2)")
 
     return data
 

@@ -437,6 +437,14 @@ int DeviceRunner::run(
         perf_collector_.scan_remaining_perf_buffers();
         perf_collector_.collect_phase_data();
         export_swimlane_json();
+
+        auto free_cb = [](void *dev_ptr, void *user_data) -> int {
+            (void)user_data;
+            free(dev_ptr);
+            return 0;
+        };
+        perf_collector_.finalize(nullptr, free_cb, nullptr);
+        runtime.perf_data_base = 0;
     }
 
     // Print handshake results at end of run

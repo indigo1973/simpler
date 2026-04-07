@@ -888,9 +888,10 @@ class CodeRunner:
                 config.block_dim = self.block_dim
                 config.aicpu_thread_num = self.aicpu_thread_num
                 config.orch_thread_num = self.orch_thread_num
-                if self.enable_profiling and round_idx == 0:
+                if self.enable_profiling:
                     config.enable_profiling = True
-                    logger.info("Profiling enabled")
+                    if round_idx == 0:
+                        logger.info("Profiling enabled")
 
                 with _temporary_env(run_env):
                     worker.run(chip_callable, orch_args, config)

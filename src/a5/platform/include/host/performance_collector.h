@@ -404,6 +404,7 @@ private:
     std::vector<std::vector<AicpuPhaseRecord>> collected_phase_records_;
     AicpuOrchSummary collected_orch_summary_{};
     bool has_phase_data_{false};
+    uint32_t swimlane_format_level_{2};  // From PerfDataHeader (device); default 2
 
     // Core-to-thread mapping (core_id → scheduler thread index, -1 = unassigned)
     std::vector<int8_t> core_to_thread_;

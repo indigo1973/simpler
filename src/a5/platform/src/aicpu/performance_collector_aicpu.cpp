@@ -85,6 +85,11 @@ void perf_aicpu_init_profiling(Runtime *runtime) {
 
     int32_t task_count = runtime->get_task_count();
     s_perf_header->total_tasks = static_cast<uint32_t>(task_count);
+#if defined(PTO2_PERF_LEVEL)
+    s_perf_header->swimlane_format_level = static_cast<uint32_t>(PTO2_PERF_LEVEL);
+#else
+    s_perf_header->swimlane_format_level = 2;
+#endif
 
     LOG_INFO("Initializing performance profiling for %d cores (free queue)", runtime->worker_count);
 

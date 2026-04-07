@@ -433,6 +433,16 @@ int DeviceRunner::run(
         perf_collector_.scan_remaining_perf_buffers();
         perf_collector_.collect_phase_data();
         export_swimlane_json();
+
+        // Release perf shared memory so a subsequent run() in the same process (e.g. run_example -n N)
+        // can call initialize() again; otherwise "PerformanceCollector already initialized".
+        auto free_cb = [](void *dev_ptr, void *user_data) -> int {
+            (void)user_data;
+            free(dev_ptr);
+            return 0;
+        };
+        perf_collector_.finalize(nullptr, free_cb, nullptr);
+        runtime.perf_data_base = 0;
     }
 
     // Print handshake results at end of run
@@ -639,7 +649,7 @@ int DeviceRunner::init_performance_profiling(Runtime &runtime, int num_aicore, i
     };
 
     // Simulation: no registration needed (pass nullptr)
-    return perf_collector_.initialize(runtime, num_aicore, device_id, alloc_cb, nullptr, free_cb, nullptr, nullptr);
+    return perf_collector_.initialize(runtime, num_aicore, device_id, alloc_cb, nullptr, nullptr, free_cb, nullptr, nullptr);
 }
 
 void DeviceRunner::poll_and_collect_performance_data(int expected_tasks) {

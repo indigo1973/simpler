@@ -117,8 +117,11 @@ __aicore__ __attribute__((weak)) void aicore_execute(__gm__ Runtime *runtime, in
 
             write_reg(RegId::COND, MAKE_ACK_VALUE(task_id));
 
-            // Performance profiling: record start time
-            uint64_t start_time = get_sys_cnt_aicore();
+            uint64_t start_time = 0;
+            uint64_t end_time = 0;
+            if (profiling_enabled) {
+                start_time = get_sys_cnt_aicore();
+            }
 
             // Execute the task
             CPU_SIM_SET_EXECUTION_CONTEXT(
@@ -128,9 +131,8 @@ __aicore__ __attribute__((weak)) void aicore_execute(__gm__ Runtime *runtime, in
             CPU_SIM_SET_TASK_COOKIE(platform_get_cpu_sim_task_cookie(static_cast<uint32_t>(block_idx), task_id));
             execute_task(payload);
 
-            // Performance profiling: record task execution
             if (profiling_enabled) {
-                uint64_t end_time = get_sys_cnt_aicore();
+                end_time = get_sys_cnt_aicore();
                 __gm__ PerfBuffer *perf_buf = (__gm__ PerfBuffer *)my_hank->perf_records_addr;
                 perf_aicore_record_task(perf_buf, task_id, start_time, end_time);
             }

@@ -68,6 +68,19 @@
 #error "PTO2_TENSORMAP_PROFILING requires PTO2_ORCH_PROFILING=1"
 #endif
 
+// Swimlane collection level (independent of PTO2_PROFILING and log macros).
+//   0 = AICore execution timestamps only; JSON omits task dependency (fanout) edges
+//   1 = + AICPU task metadata (dispatch/finish/fanout); no sched/orch phase bands
+//   2 = + sched + orch phase profiling (full swimlane)
+#ifndef PTO2_PERF_LEVEL
+#define PTO2_PERF_LEVEL 0
+#endif
+#if PTO2_PERF_LEVEL < 0 || PTO2_PERF_LEVEL > 2
+#error "PTO2_PERF_LEVEL must be 0, 1, or 2"
+#endif
+#define PTO2_PERF_TASK (PTO2_PERF_LEVEL >= 1)
+#define PTO2_PERF_PHASE (PTO2_PERF_LEVEL >= 2)
+
 // =============================================================================
 // AICPU Error Codes (written to shared memory for Host-side diagnosis)
 // =============================================================================

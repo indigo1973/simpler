@@ -74,8 +74,8 @@ struct PTO2OrchestratorState {
     // Total core counts set once at executor init; used for submit-time deadlock detection.
     int32_t total_cluster_count{0};  // AIC cores = MIX clusters
     int32_t total_aiv_count{0};      // AIV cores (= 2 × clusters on standard hardware)
-#if PTO2_PROFILING
-    // Runtime profiling switch copied from Runtime::enable_profiling.
+#if PTO2_PERF_TASK || PTO2_PERF_PHASE || (PTO2_PERF_LEVEL == 0)
+    // Runtime swimlane switch (decoupled from PTO2_PROFILING); copied from Runtime::enable_profiling.
     bool enable_profiling;
 #endif
 
