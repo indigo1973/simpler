@@ -60,14 +60,14 @@ using PerfAllocCallback = void *(*)(size_t size, void *user_data);
 using PerfRegisterCallback = int (*)(void *dev_ptr, size_t size, int device_id, void *user_data, void **host_ptr);
 
 /**
- * Memory unregister callback
+ * Memory unregister callback (e.g. halHostUnregister)
  *
- * @param dev_ptr Device memory pointer
+ * @param host_ptr Host-mapped address (same as *host_ptr from PerfRegisterCallback), not device VA
  * @param device_id Device ID
  * @param user_data User-provided context pointer
  * @return 0 on success, error code on failure
  */
-using PerfUnregisterCallback = int (*)(void *dev_ptr, int device_id, void *user_data);
+using PerfUnregisterCallback = int (*)(void *host_ptr, int device_id, void *user_data);
 
 /**
  * Memory free callback
@@ -150,11 +150,12 @@ public:
      * @param user_data User context for callbacks
      * @param device_id Device ID for registration
      * @param set_device_cb Device context setup callback (nullptr to skip)
+     * @param unregister_cb Host unregister for mapped buffers (nullptr for simulation)
      */
     void start(
         void *shared_mem_host, int num_cores, int num_phase_threads, PerfAllocCallback alloc_cb,
         PerfRegisterCallback register_cb, PerfFreeCallback free_cb, void *user_data, int device_id,
-        PerfSetDeviceCallback set_device_cb = nullptr
+        PerfSetDeviceCallback set_device_cb = nullptr, PerfUnregisterCallback unregister_cb = nullptr
     );
 
     /**
@@ -206,6 +207,7 @@ private:
     PerfRegisterCallback register_cb_{nullptr};
     PerfFreeCallback free_cb_{nullptr};
     PerfSetDeviceCallback set_device_cb_{nullptr};
+    PerfUnregisterCallback unregister_cb_{nullptr};
     void *user_data_{nullptr};
     int device_id_{-1};
 
@@ -282,11 +284,13 @@ public:
      * @param free_cb Memory free callback
      * @param user_data User-provided context pointer passed to callbacks
      * @param set_device_cb Device context setup callback (nullptr to skip)
+     * @param unregister_cb Host unregister for halHostRegister mappings (nullptr for simulation)
      * @return 0 on success, error code on failure
      */
     int initialize(
         Runtime &runtime, int num_aicore, int device_id, PerfAllocCallback alloc_cb, PerfRegisterCallback register_cb,
-        PerfFreeCallback free_cb, void *user_data, PerfSetDeviceCallback set_device_cb = nullptr
+        PerfFreeCallback free_cb, void *user_data, PerfSetDeviceCallback set_device_cb = nullptr,
+        PerfUnregisterCallback unregister_cb = nullptr
     );
 
     /**
@@ -392,6 +396,7 @@ private:
     PerfRegisterCallback register_cb_{nullptr};
     PerfFreeCallback free_cb_{nullptr};
     PerfSetDeviceCallback set_device_cb_{nullptr};
+    PerfUnregisterCallback unregister_cb_{nullptr};
     void *user_data_{nullptr};
 
     // Memory manager

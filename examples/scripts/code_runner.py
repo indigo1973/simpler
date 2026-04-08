@@ -886,7 +886,8 @@ class CodeRunner:
                 config = CallConfig()
                 config.block_dim = self.block_dim
                 config.aicpu_thread_num = self.aicpu_thread_num
-                if self.enable_profiling and round_idx == 0:
+                # if self.enable_profiling and round_idx == 0:
+                if self.enable_profiling:
                     config.enable_profiling = True
                     logger.info("Profiling enabled")
 

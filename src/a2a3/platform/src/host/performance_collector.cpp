@@ -48,7 +48,7 @@ ProfMemoryManager::~ProfMemoryManager() {
 void ProfMemoryManager::start(
     void *shared_mem_host, int num_cores, int num_phase_threads, PerfAllocCallback alloc_cb,
     PerfRegisterCallback register_cb, PerfFreeCallback free_cb, void *user_data, int device_id,
-    PerfSetDeviceCallback set_device_cb
+    PerfSetDeviceCallback set_device_cb, PerfUnregisterCallback unregister_cb
 ) {
     shared_mem_host_ = shared_mem_host;
     num_cores_ = num_cores;
@@ -59,6 +59,7 @@ void ProfMemoryManager::start(
     user_data_ = user_data;
     device_id_ = device_id;
     set_device_cb_ = set_device_cb;
+    unregister_cb_ = unregister_cb;
 
     running_.store(true);
     mgmt_thread_ = std::thread(&ProfMemoryManager::mgmt_loop, this);
@@ -153,10 +154,20 @@ void *ProfMemoryManager::alloc_and_register(size_t size, void **host_ptr_out) {
 }
 
 void ProfMemoryManager::free_buffer(void *dev_ptr) {
-    if (dev_ptr != nullptr && free_cb_ != nullptr) {
-        dev_to_host_.erase(dev_ptr);
-        free_cb_(dev_ptr, user_data_);
+    if (dev_ptr == nullptr || free_cb_ == nullptr) {
+        return;
     }
+    auto it = dev_to_host_.find(dev_ptr);
+    if (it != dev_to_host_.end()) {
+        if (unregister_cb_ != nullptr && register_cb_ != nullptr) {
+            int rc = unregister_cb_(it->second, device_id_, user_data_);
+            if (rc != 0) {
+                LOG_WARN("ProfMemoryManager: unregister failed for buffer dev=%p: %d", dev_ptr, rc);
+            }
+        }
+        dev_to_host_.erase(it);
+    }
+    free_cb_(dev_ptr, user_data_);
 }
 
 void *ProfMemoryManager::resolve_host_ptr(void *dev_ptr) {
@@ -544,7 +555,7 @@ void *PerformanceCollector::alloc_single_buffer(size_t size, void **host_ptr_out
 
 int PerformanceCollector::initialize(
     Runtime &runtime, int num_aicore, int device_id, PerfAllocCallback alloc_cb, PerfRegisterCallback register_cb,
-    PerfFreeCallback free_cb, void *user_data, PerfSetDeviceCallback set_device_cb
+    PerfFreeCallback free_cb, void *user_data, PerfSetDeviceCallback set_device_cb, PerfUnregisterCallback unregister_cb
 ) {
     if (perf_shared_mem_host_ != nullptr) {
         LOG_ERROR("PerformanceCollector already initialized");
@@ -565,6 +576,7 @@ int PerformanceCollector::initialize(
     free_cb_ = free_cb;
     user_data_ = user_data;
     set_device_cb_ = set_device_cb;
+    unregister_cb_ = unregister_cb;
 
     // Step 1: Calculate shared memory size (slot arrays only, no actual buffers)
     int num_phase_threads = PLATFORM_MAX_AICPU_THREADS;
@@ -713,7 +725,7 @@ void PerformanceCollector::start_memory_manager() {
 
     memory_manager_.start(
         perf_shared_mem_host_, num_aicore_, PLATFORM_MAX_AICPU_THREADS, alloc_cb_, register_cb_, free_cb_, user_data_,
-        device_id_, set_device_cb_
+        device_id_, set_device_cb_, unregister_cb_
     );
 }
 
@@ -1471,9 +1483,9 @@ int PerformanceCollector::finalize(PerfUnregisterCallback unregister_cb, PerfFre
     for (int i = 0; i < num_aicore_; i++) {
         PerfBufferState *state = get_perf_buffer_state(perf_shared_mem_host_, i);
 
-        // Free current buffer if any
-        if (state->current_buf_ptr != 0 && free_cb != nullptr) {
-            free_cb(reinterpret_cast<void *>(state->current_buf_ptr), user_data);
+        // Free current buffer if any (unregister host mapping before device free)
+        if (state->current_buf_ptr != 0) {
+            memory_manager_.free_buffer(reinterpret_cast<void *>(state->current_buf_ptr));
         }
 
         // Free all buffers in free_queue (limit iterations to max capacity)
@@ -1483,8 +1495,8 @@ int PerformanceCollector::finalize(PerfUnregisterCallback unregister_cb, PerfFre
         uint32_t max_iters = PLATFORM_PROF_SLOT_COUNT;
         while (head != tail && max_iters-- > 0) {
             uint64_t buf_ptr = state->free_queue.buffer_ptrs[head % PLATFORM_PROF_SLOT_COUNT];
-            if (buf_ptr != 0 && free_cb != nullptr) {
-                free_cb(reinterpret_cast<void *>(buf_ptr), user_data);
+            if (buf_ptr != 0) {
+                memory_manager_.free_buffer(reinterpret_cast<void *>(buf_ptr));
             }
             head++;
         }
@@ -1497,9 +1509,9 @@ int PerformanceCollector::finalize(PerfUnregisterCallback unregister_cb, PerfFre
     for (int t = 0; t < num_phase_threads; t++) {
         PhaseBufferState *state = get_phase_buffer_state(perf_shared_mem_host_, num_aicore_, t);
 
-        // Free current buffer if any
-        if (state->current_buf_ptr != 0 && free_cb != nullptr) {
-            free_cb(reinterpret_cast<void *>(state->current_buf_ptr), user_data);
+        // Free current buffer if any (unregister host mapping before device free)
+        if (state->current_buf_ptr != 0) {
+            memory_manager_.free_buffer(reinterpret_cast<void *>(state->current_buf_ptr));
         }
 
         // Free all buffers in free_queue (limit iterations to max capacity)
@@ -1509,8 +1521,8 @@ int PerformanceCollector::finalize(PerfUnregisterCallback unregister_cb, PerfFre
         uint32_t max_iters = PLATFORM_PROF_SLOT_COUNT;
         while (head != tail && max_iters-- > 0) {
             uint64_t buf_ptr = state->free_queue.buffer_ptrs[head % PLATFORM_PROF_SLOT_COUNT];
-            if (buf_ptr != 0 && free_cb != nullptr) {
-                free_cb(reinterpret_cast<void *>(buf_ptr), user_data);
+            if (buf_ptr != 0) {
+                memory_manager_.free_buffer(reinterpret_cast<void *>(buf_ptr));
             }
             head++;
         }
@@ -1519,9 +1531,10 @@ int PerformanceCollector::finalize(PerfUnregisterCallback unregister_cb, PerfFre
         }
     }
 
-    // Unregister host mapping (optional)
+    // Unregister host mapping (optional). Ascend halHostUnregister expects the host VA
+    // returned from halHostRegister (*host_ptr out), not the device pointer.
     if (unregister_cb != nullptr && was_registered_) {
-        int rc = unregister_cb(perf_shared_mem_dev_, device_id_, user_data);
+        int rc = unregister_cb(perf_shared_mem_host_, device_id_, user_data);
         if (rc != 0) {
             LOG_ERROR("halHostUnregister failed: %d", rc);
             return rc;
@@ -1546,6 +1559,7 @@ int PerformanceCollector::finalize(PerfUnregisterCallback unregister_cb, PerfFre
     alloc_cb_ = nullptr;
     register_cb_ = nullptr;
     free_cb_ = nullptr;
+    unregister_cb_ = nullptr;
     user_data_ = nullptr;
 
     LOG_DEBUG("Performance profiling cleanup complete");

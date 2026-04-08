@@ -551,6 +551,23 @@ int DeviceRunner::run(
         perf_collector_.scan_remaining_perf_buffers();
         perf_collector_.collect_phase_data();
         export_swimlane_json();
+
+        // Teardown perf state so a subsequent run() in the same process (e.g. -n 3) can
+        // initialize again; otherwise PerformanceCollector::initialize returns "already initialized".
+        auto unregister_cb = [](void *host_ptr, int dev_id, void *user_data) -> int {
+            (void)user_data;
+            HalHostUnregisterFn fn = get_halHostUnregister();
+            if (fn != nullptr) {
+                return fn(host_ptr, dev_id);
+            }
+            return 0;
+        };
+        auto free_cb = [](void *dev_ptr, void *user_data) -> int {
+            auto *allocator = static_cast<MemoryAllocator *>(user_data);
+            return allocator->free(dev_ptr);
+        };
+        perf_collector_.finalize(unregister_cb, free_cb, &mem_alloc_);
+        runtime.perf_data_base = 0;
     }
 
     // Print handshake results (reads from device memory, must be before free)
@@ -614,11 +631,11 @@ int DeviceRunner::finalize() {
 
     // Cleanup performance profiling
     if (perf_collector_.is_initialized()) {
-        auto unregister_cb = [](void *dev_ptr, int device_id, void *user_data) -> int {
+        auto unregister_cb = [](void *host_ptr, int device_id, void *user_data) -> int {
             (void)user_data;
             HalHostUnregisterFn fn = get_halHostUnregister();
             if (fn != nullptr) {
-                return fn(dev_ptr, device_id);
+                return fn(host_ptr, device_id);
             }
             return 0;
         };
@@ -811,8 +828,17 @@ int DeviceRunner::init_performance_profiling(Runtime &runtime, int num_aicore, i
         return rtSetDevice(device_id);
     };
 
+    auto unregister_cb = [](void *host_ptr, int dev_id, void *user_data) -> int {
+        (void)user_data;
+        HalHostUnregisterFn fn = get_halHostUnregister();
+        if (fn != nullptr) {
+            return fn(host_ptr, dev_id);
+        }
+        return 0;
+    };
+
     return perf_collector_.initialize(
-        runtime, num_aicore, device_id, alloc_cb, register_cb, free_cb, &mem_alloc_, set_device_cb
+        runtime, num_aicore, device_id, alloc_cb, register_cb, free_cb, &mem_alloc_, set_device_cb, unregister_cb
     );
 }
 

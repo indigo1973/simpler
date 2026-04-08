@@ -129,10 +129,8 @@ int run_runtime(
             return rc;
         }
 
-        // Phase 2: profiling
-        if (enable_profiling) {
-            r->enable_profiling = true;
-        }
+        // Phase 2: profiling — must set every run (runtime buffer reused; stale enable_profiling bug).
+        r->enable_profiling = (enable_profiling != 0);
 
         // Phase 3: launch
         DeviceRunner &runner = DeviceRunner::get();

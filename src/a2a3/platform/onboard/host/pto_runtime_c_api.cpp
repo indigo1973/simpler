@@ -129,10 +129,10 @@ int run_runtime(
             return rc;
         }
 
-        // Phase 2: profiling
-        if (enable_profiling) {
-            r->enable_profiling = true;
-        }
+        // Phase 2: profiling — must set every run: runtime buffer is reused across ChipWorker::run(),
+        // and tensormap Runtime::Runtime() does not zero enable_profiling; otherwise round 1 leaves
+        // stale true and later rounds still collect/export despite Python passing enable_profiling=0.
+        r->enable_profiling = (enable_profiling != 0);
 
         // Phase 3: launch
         DeviceRunner &runner = DeviceRunner::get();
