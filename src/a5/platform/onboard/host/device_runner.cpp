@@ -378,7 +378,7 @@ int DeviceRunner::run(
     });
 
     // Initialize performance profiling if enabled
-    if (runtime.enable_profiling) {
+    if (runtime.perf_level > 0) {
         rc = init_performance_profiling(runtime, num_aicore, device_id);
         if (rc != 0) {
             LOG_ERROR("init_performance_profiling failed: %d", rc);
@@ -439,7 +439,7 @@ int DeviceRunner::run(
 
     // After streams are synchronized, pull profiling data back in one batch
     // (memcpy-based: two-step count-first copy per buffer).
-    if (runtime.enable_profiling) {
+    if (runtime.perf_level > 0) {
         perf_collector_.collect_all();
         export_swimlane_json();
     }
@@ -679,6 +679,7 @@ int DeviceRunner::init_performance_profiling(Runtime &runtime, int num_aicore, i
         return rtMemcpy(host_dst, size, dev_src, size, RT_MEMCPY_DEVICE_TO_HOST);
     };
 
+    perf_collector_.set_perf_level(runtime.perf_level);
     return perf_collector_.initialize(
         runtime, num_aicore, device_id, alloc_cb, free_cb, copy_to_dev_cb, copy_from_dev_cb
     );

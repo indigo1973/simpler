@@ -27,6 +27,7 @@
 #include "device_runner.h"
 #include "host/raii_scope_guard.h"
 #include "runtime.h"
+#include "runtime_profiling_mode.h"
 
 extern "C" {
 
@@ -162,9 +163,7 @@ int run_runtime(
             return rc;
         }
 
-        if (enable_profiling) {
-            r->enable_profiling = true;
-        }
+        set_runtime_profiling_mode(r, enable_profiling);
 
         std::vector<uint8_t> aicpu_vec(aicpu_binary, aicpu_binary + aicpu_size);
         std::vector<uint8_t> aicore_vec(aicore_binary, aicore_binary + aicore_size);

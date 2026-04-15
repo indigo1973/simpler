@@ -26,7 +26,7 @@
 #include "common/unified_log.h"
 #include "device_runner.h"
 #include "host/raii_scope_guard.h"
-#include "host/runtime_profiling_mode.h"
+#include "runtime_profiling_mode.h"
 #include "runtime.h"
 
 extern "C" {

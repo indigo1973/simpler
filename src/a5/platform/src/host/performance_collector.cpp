@@ -406,7 +406,17 @@ int PerformanceCollector::export_swimlane_json(const std::string &output_path) {
     }
 
     // Step 7: Write JSON data
-    int version = has_phase_data_ ? 2 : 1;
+    int version;
+    if (perf_level_ <= 1) {
+        version = 0;
+    } else if (has_phase_data_) {
+        version = 2;
+    } else {
+        if (perf_level_ >= 3) {
+            LOG_WARN("perf_level=%d but no phase data collected; writing version=1", perf_level_);
+        }
+        version = 1;
+    }
     outfile << "{\n";
     outfile << "  \"version\": " << version << ",\n";
     outfile << "  \"tasks\": [\n";
@@ -419,8 +429,6 @@ int PerformanceCollector::export_swimlane_json(const std::string &output_path) {
         double start_us = cycles_to_us(record.start_time - base_time_cycles);
         double end_us = cycles_to_us(record.end_time - base_time_cycles);
         double duration_us = end_us - start_us;
-        double dispatch_us = (record.dispatch_time > 0) ? cycles_to_us(record.dispatch_time - base_time_cycles) : 0.0;
-        double finish_us = (record.finish_time > 0) ? cycles_to_us(record.finish_time - base_time_cycles) : 0.0;
 
         const char *core_type_str = (record.core_type == CoreType::AIC) ? "aic" : "aiv";
 
@@ -432,20 +440,27 @@ int PerformanceCollector::export_swimlane_json(const std::string &output_path) {
         outfile << "      \"ring_id\": " << static_cast<int>(record.task_id >> 32) << ",\n";
         outfile << "      \"start_time_us\": " << std::fixed << std::setprecision(3) << start_us << ",\n";
         outfile << "      \"end_time_us\": " << std::fixed << std::setprecision(3) << end_us << ",\n";
-        outfile << "      \"duration_us\": " << std::fixed << std::setprecision(3) << duration_us << ",\n";
-        outfile << "      \"dispatch_time_us\": " << std::fixed << std::setprecision(3) << dispatch_us << ",\n";
-        outfile << "      \"finish_time_us\": " << std::fixed << std::setprecision(3) << finish_us << ",\n";
-        outfile << "      \"fanout\": [";
-        int safe_fanout_count =
-            (record.fanout_count >= 0 && record.fanout_count <= RUNTIME_MAX_FANOUT) ? record.fanout_count : 0;
-        for (int j = 0; j < safe_fanout_count; ++j) {
-            outfile << record.fanout[j];
-            if (j < safe_fanout_count - 1) {
-                outfile << ", ";
+        if (perf_level_ >= 2) {
+            double dispatch_us =
+                (record.dispatch_time > 0) ? cycles_to_us(record.dispatch_time - base_time_cycles) : 0.0;
+            double finish_us = (record.finish_time > 0) ? cycles_to_us(record.finish_time - base_time_cycles) : 0.0;
+            outfile << "      \"duration_us\": " << std::fixed << std::setprecision(3) << duration_us << ",\n";
+            outfile << "      \"dispatch_time_us\": " << std::fixed << std::setprecision(3) << dispatch_us << ",\n";
+            outfile << "      \"finish_time_us\": " << std::fixed << std::setprecision(3) << finish_us << ",\n";
+            outfile << "      \"fanout\": [";
+            int safe_fanout_count =
+                (record.fanout_count >= 0 && record.fanout_count <= RUNTIME_MAX_FANOUT) ? record.fanout_count : 0;
+            for (int j = 0; j < safe_fanout_count; ++j) {
+                outfile << record.fanout[j];
+                if (j < safe_fanout_count - 1) {
+                    outfile << ", ";
+                }
             }
+            outfile << "],\n";
+            outfile << "      \"fanout_count\": " << record.fanout_count << "\n";
+        } else {
+            outfile << "      \"duration_us\": " << std::fixed << std::setprecision(3) << duration_us << "\n";
         }
-        outfile << "],\n";
-        outfile << "      \"fanout_count\": " << record.fanout_count << "\n";
         outfile << "    }";
         if (i < tagged_records.size() - 1) {
             outfile << ",";

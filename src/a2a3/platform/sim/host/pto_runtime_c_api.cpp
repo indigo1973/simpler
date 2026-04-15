@@ -28,7 +28,7 @@
 #include "cpu_sim_context.h"
 #include "device_runner.h"
 #include "runtime.h"
-#include "host/runtime_profiling_mode.h"
+#include "runtime_profiling_mode.h"
 
 extern "C" {
 

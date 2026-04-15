@@ -52,7 +52,7 @@ __aicore__ __attribute__((weak)) void aicore_execute(__gm__ Runtime *runtime, in
 
     dcci(my_hank, SINGLE_CACHE_LINE, CACHELINE_OUT);
 
-    bool profiling_enabled = runtime->enable_profiling;
+    bool profiling_enabled = (runtime->perf_level > 0);
 
     volatile uint32_t task_id = AICPU_IDLE_TASK_ID;
     volatile uint32_t last_task_id = AICPU_IDLE_TASK_ID;
