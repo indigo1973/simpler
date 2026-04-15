@@ -191,7 +191,7 @@ void ChipWorker::run(const WorkerPayload &payload) {
     ChipCallConfig config;
     config.block_dim = payload.block_dim;
     config.aicpu_thread_num = payload.aicpu_thread_num;
-    config.enable_profiling = payload.enable_profiling;
+    config.perf_level = payload.enable_profiling;
     run(payload.callable, payload.args, config);
 }
 
@@ -204,7 +204,7 @@ void ChipWorker::run(const void *callable, const void *args, const ChipCallConfi
 
     int rc = run_runtime_fn_(
         device_ctx_, rt, callable, args, config.block_dim, config.aicpu_thread_num, device_id_, aicpu_binary_.data(),
-        aicpu_binary_.size(), aicore_binary_.data(), aicore_binary_.size(), config.enable_profiling ? 1 : 0
+        aicpu_binary_.size(), aicore_binary_.data(), aicore_binary_.size(), config.perf_level
     );
     if (rc != 0) {
         throw std::runtime_error("run_runtime failed with code " + std::to_string(rc));

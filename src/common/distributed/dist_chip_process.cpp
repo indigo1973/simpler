@@ -57,7 +57,7 @@ void DistChipProcess::run(const WorkerPayload &payload) {
     // Write config fields
     int32_t block_dim = payload.block_dim;
     int32_t aicpu_tn = payload.aicpu_thread_num;
-    int32_t profiling = payload.enable_profiling ? 1 : 0;
+    int32_t profiling = payload.enable_profiling;
     std::memcpy(base() + OFF_BLOCK_DIM, &block_dim, sizeof(int32_t));
     std::memcpy(base() + OFF_AICPU_THREAD_NUM, &aicpu_tn, sizeof(int32_t));
     std::memcpy(base() + OFF_ENABLE_PROFILING, &profiling, sizeof(int32_t));

@@ -192,7 +192,7 @@ void DistScheduler::dispatch_ready() {
             p.args = &s.chip_storage_list[i];
             p.block_dim = s.config.block_dim;
             p.aicpu_thread_num = s.config.aicpu_thread_num;
-            p.enable_profiling = s.config.enable_profiling;
+            p.enable_profiling = s.config.perf_level;
             p.callable_id = s.callable_id;
             workers[i]->dispatch(p);
         }

@@ -90,7 +90,7 @@ struct WorkerPayload {
     const void *args = nullptr;      // ChipStorageTaskArgs* (in slot storage)
     int32_t block_dim = 1;
     int32_t aicpu_thread_num = 3;
-    bool enable_profiling = false;
+    int enable_profiling = 0;
 
     // --- SubWorker fields ---
     int32_t callable_id = -1;
