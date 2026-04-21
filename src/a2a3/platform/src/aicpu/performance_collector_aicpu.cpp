@@ -128,7 +128,8 @@ void perf_aicpu_init_profiling(Runtime *runtime) {
 
 int perf_aicpu_complete_record(
     PerfBuffer *perf_buf, uint32_t expected_reg_task_id, uint64_t task_id, uint32_t func_id, CoreType core_type,
-    uint64_t dispatch_time, uint64_t finish_time, const uint64_t *fanout, int32_t fanout_count
+    uint64_t dispatch_time, uint64_t finish_time, const uint64_t *fanin, int32_t fanin_count,
+    int32_t fanin_actual_count_raw
 ) {
     rmb();
     uint32_t count = perf_buf->count;
@@ -153,15 +154,16 @@ int perf_aicpu_complete_record(
     record->dispatch_time = dispatch_time;
     record->finish_time = finish_time;
 
-    if (fanout != nullptr && fanout_count > 0) {
-        int32_t n = (fanout_count > RUNTIME_MAX_FANOUT) ? RUNTIME_MAX_FANOUT : fanout_count;
+    if (fanin != nullptr && fanin_count > 0) {
+        int32_t n = (fanin_count > RUNTIME_MAX_FANIN) ? RUNTIME_MAX_FANIN : fanin_count;
         for (int32_t i = 0; i < n; i++) {
-            record->fanout[i] = fanout[i];
+            record->fanin[i] = fanin[i];
         }
-        record->fanout_count = n;
+        record->fanin_count = n;
     } else {
-        record->fanout_count = 0;
+        record->fanin_count = 0;
     }
+    record->fanin_actual_count_raw = fanin_actual_count_raw;
 
     perf_buf->count = count + 1;
     wmb();

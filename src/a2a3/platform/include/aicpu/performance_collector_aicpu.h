@@ -42,8 +42,9 @@ void perf_aicpu_init_profiling(Runtime *runtime);
  * Complete a PerfRecord with AICPU-side metadata after AICore task completion
  *
  * Reads perf_buf->count, validates task_id match against the latest record,
- * and fills all AICPU-side fields. Callers must pre-extract fanout into a
- * plain uint64_t array (platform layer cannot depend on runtime linked-list types).
+ * and fills all AICPU-side fields. Callers must pre-extract fanin (predecessor
+ * task ids) into a plain uint64_t array (platform layer cannot depend on
+ * runtime payload types). Host inverts fanin → fanout when emitting swimlane.
  *
  * @param perf_buf              PerfBuffer pointer (from handshake perf_records_addr)
  * @param expected_reg_task_id  Register dispatch token (low 32 bits) to validate
@@ -52,12 +53,14 @@ void perf_aicpu_init_profiling(Runtime *runtime);
  * @param core_type             Core type (AIC/AIV)
  * @param dispatch_time         AICPU timestamp when task was dispatched
  * @param finish_time           AICPU timestamp when task completion was observed
- * @param fanout                Pre-extracted successor task ID array (nullptr if none)
- * @param fanout_count          Number of entries in fanout array (0 if none)
+ * @param fanin                 Pre-extracted predecessor task ID array (nullptr if none)
+ * @param fanin_count           Number of entries in fanin array (0 if none)
+ * @param fanin_actual_count_raw  Raw payload.fanin_actual_count before any caller-side truncation (diagnostic)
  */
 int perf_aicpu_complete_record(
     PerfBuffer *perf_buf, uint32_t expected_reg_task_id, uint64_t task_id, uint32_t func_id, CoreType core_type,
-    uint64_t dispatch_time, uint64_t finish_time, const uint64_t *fanout, int32_t fanout_count
+    uint64_t dispatch_time, uint64_t finish_time, const uint64_t *fanin, int32_t fanin_count,
+    int32_t fanin_actual_count_raw
 );
 
 /**

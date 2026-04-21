@@ -374,20 +374,23 @@ struct AicpuExecutor {
                     uint64_t finish_ts = get_sys_cnt_aicpu();
                     PerfBuffer *perf_buf = reinterpret_cast<PerfBuffer *>(h->perf_records_addr);
 
-                    // Pre-extract fanout (platform layer cannot depend on PTO2DepListEntry)
-                    uint64_t fanout_arr[RUNTIME_MAX_FANOUT];
-                    int32_t fanout_n = 0;
-                    PTO2DepListEntry *cur = slot_state.fanout_head;
-                    while (cur != nullptr && fanout_n < RUNTIME_MAX_FANOUT) {
-                        fanout_arr[fanout_n++] = cur->slot_state->task->task_id.raw;
-                        cur = cur->next;
+                    // Pre-extract fanin from this task's payload (no race: payload is
+                    // populated by orchestrator before the task is dispatched, then read
+                    // only on the same AICPU thread that runs the task).
+                    uint64_t fanin_arr[RUNTIME_MAX_FANIN];
+                    int32_t fanin_n = 0;
+                    PTO2TaskPayload *pl = slot_state.payload;
+                    int32_t total_fanin = pl->fanin_actual_count;
+                    if (total_fanin > RUNTIME_MAX_FANIN) total_fanin = RUNTIME_MAX_FANIN;
+                    for (int32_t i = 0; i < total_fanin; i++) {
+                        fanin_arr[fanin_n++] = pl->fanin_slot_states[i]->task->task_id.raw;
                     }
 
                     int32_t perf_slot_idx = static_cast<int32_t>(executing_subslot_by_core_[core_id]);
                     if (perf_aicpu_complete_record(
                             perf_buf, static_cast<uint32_t>(expected_reg_task_id), slot_state.task->task_id.raw,
                             slot_state.task->kernel_id[perf_slot_idx], CT, dispatch_timestamps_[core_id], finish_ts,
-                            fanout_arr, fanout_n
+                            fanin_arr, fanin_n, pl->fanin_actual_count
                         ) != 0) {
                         DEV_ERROR(
                             "Core %d: perf_aicpu_complete_record failed for task 0x%" PRIx64, core_id,

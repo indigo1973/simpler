@@ -60,9 +60,12 @@
 #include "common/core_type.h"
 #include "common/platform_config.h"
 
-// Maximum number of successor tasks per PerfRecord (matches Task::fanout)
-#ifndef RUNTIME_MAX_FANOUT
-#define RUNTIME_MAX_FANOUT 128
+// Maximum number of predecessor tasks per PerfRecord. Fanin is recorded on the
+// consumer side because it is fully populated by the orchestrator before the
+// consumer is queued, avoiding the producer-side race that previously caused
+// fanout edges to be silently dropped.
+#ifndef RUNTIME_MAX_FANIN
+#define RUNTIME_MAX_FANIN 128
 #endif
 
 // =============================================================================
@@ -90,9 +93,10 @@ struct PerfRecord {
     uint32_t func_id;    // Kernel function identifier
     CoreType core_type;  // Core type (AIC/AIV)
 
-    // Dependency relationship (fanout only)
-    uint64_t fanout[RUNTIME_MAX_FANOUT];  // Successor task task_id array
-    int32_t fanout_count;                 // Number of successor tasks
+    // Dependency relationship (fanin recorded on consumer; host inverts to fanout)
+    uint64_t fanin[RUNTIME_MAX_FANIN];  // Predecessor task task_id array
+    int32_t fanin_count;                // Number of predecessor tasks recorded in fanin[] (post-truncation)
+    int32_t fanin_actual_count_raw;     // Raw payload.fanin_actual_count before truncation (debug/diagnostic)
 } __attribute__((aligned(64)));
 
 static_assert(sizeof(PerfRecord) % 64 == 0, "PerfRecord must be 64-byte aligned for optimal cache performance");

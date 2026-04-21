@@ -145,7 +145,7 @@ def _update_to_latest(clone_path: Path, verbose: bool) -> None:
     try:
         if verbose:
             logger.info("Updating pto-isa to latest...")
-        _run_git(["fetch", "origin"], cwd=clone_path, timeout=120, check=True)
+        _run_git(["fetch", "origin"], cwd=clone_path, timeout=5, check=True)
         _run_git(["reset", "--hard", "origin/HEAD"], cwd=clone_path, timeout=30, check=True)
     except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
         logger.warning(f"Failed to update pto-isa to latest: {e.stderr if hasattr(e, 'stderr') else e}")

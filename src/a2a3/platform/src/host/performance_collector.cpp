@@ -31,10 +31,202 @@
 #include <iomanip>
 #include <optional>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "common/memory_barrier.h"
 #include "common/unified_log.h"
+
+// =============================================================================
+// Task graph sidecar (IR-derived) loader
+// =============================================================================
+//
+// The orchestration codegen emits `orchestration/task_graph.json`, a compact
+// IR-level description of every submit call site and its tensor arguments with
+// direction (in/out/inout). When present, we reconstruct per-task fanout edges
+// from the IR graph — sidestepping the ring-buffer slot recycling that caused
+// the runtime-observed `fanout` list to be lossy under the wire_task/early
+// _finished race.
+//
+// Matching strategy: runtime PerfRecord carries (task_id, func_id). For each
+// func_id, PerfRecords sorted by (ring_id = task_id >> 32, local_id = task_id
+// & 0xffffffff) correspond one-to-one, in order, with the IR sites of that
+// func_id in lexical submit order. This relies only on the fact that the PTO2
+// runtime submits tasks of the same func_id in lexical program order — no new
+// runtime identifiers are needed.
+//
+// Parser: we control the emitter (orchestration_codegen.cpp::SerializeTaskGraph)
+// and intentionally keep the schema flat and simple so this small hand-rolled
+// scanner suffices. Avoiding a JSON library keeps the host runtime's header
+// dependencies unchanged.
+namespace {
+
+struct IrTensorRef {
+    std::string root;
+    std::string dir;  // "in" | "out" | "inout"
+};
+struct IrSite {
+    int site_id = -1;
+    int func_id = -1;
+    std::string callee;
+    std::string core_type;
+    std::vector<IrTensorRef> tensors;
+};
+
+bool JsonSkipWs(const std::string &s, size_t &i) {
+    while (i < s.size() && (s[i] == ' ' || s[i] == '\t' || s[i] == '\n' || s[i] == '\r')) ++i;
+    return i < s.size();
+}
+bool JsonExpect(const std::string &s, size_t &i, char c) {
+    JsonSkipWs(s, i);
+    if (i >= s.size() || s[i] != c) return false;
+    ++i;
+    return true;
+}
+bool JsonParseString(const std::string &s, size_t &i, std::string &out) {
+    JsonSkipWs(s, i);
+    if (i >= s.size() || s[i] != '"') return false;
+    ++i;
+    out.clear();
+    while (i < s.size() && s[i] != '"') {
+        if (s[i] == '\\' && i + 1 < s.size()) {
+            char n = s[i + 1];
+            switch (n) {
+            case '"': out.push_back('"'); break;
+            case '\\': out.push_back('\\'); break;
+            case '/': out.push_back('/'); break;
+            case 'n': out.push_back('\n'); break;
+            case 't': out.push_back('\t'); break;
+            case 'r': out.push_back('\r'); break;
+            default: out.push_back(n); break;
+            }
+            i += 2;
+        } else {
+            out.push_back(s[i++]);
+        }
+    }
+    if (i >= s.size()) return false;
+    ++i;  // closing quote
+    return true;
+}
+bool JsonParseInt(const std::string &s, size_t &i, long long &out) {
+    JsonSkipWs(s, i);
+    size_t start = i;
+    if (i < s.size() && (s[i] == '-' || s[i] == '+')) ++i;
+    while (i < s.size() && s[i] >= '0' && s[i] <= '9') ++i;
+    if (i == start) return false;
+    try {
+        out = std::stoll(s.substr(start, i - start));
+    } catch (...) {
+        return false;
+    }
+    return true;
+}
+void JsonSkipValue(const std::string &s, size_t &i) {
+    JsonSkipWs(s, i);
+    if (i >= s.size()) return;
+    char c = s[i];
+    if (c == '"') {
+        std::string t;
+        JsonParseString(s, i, t);
+    } else if (c == '{' || c == '[') {
+        char open = c, close = (c == '{') ? '}' : ']';
+        int depth = 0;
+        for (; i < s.size(); ++i) {
+            if (s[i] == '"') {
+                std::string t;
+                JsonParseString(s, i, t);
+                --i;  // parse advances past closing quote
+                continue;
+            }
+            if (s[i] == open) ++depth;
+            else if (s[i] == close) {
+                --depth;
+                if (depth == 0) { ++i; return; }
+            }
+        }
+    } else {
+        while (i < s.size() && s[i] != ',' && s[i] != '}' && s[i] != ']') ++i;
+    }
+}
+
+// Parse the minimal subset of task_graph.json that the exporter emits.
+bool LoadTaskGraphSidecar(const std::string &path, std::vector<IrSite> &sites_out) {
+    std::ifstream f(path);
+    if (!f.is_open()) return false;
+    std::string s((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    size_t i = 0;
+    if (!JsonExpect(s, i, '{')) return false;
+    while (i < s.size()) {
+        JsonSkipWs(s, i);
+        if (i < s.size() && s[i] == '}') { ++i; break; }
+        std::string key;
+        if (!JsonParseString(s, i, key)) return false;
+        if (!JsonExpect(s, i, ':')) return false;
+        if (key == "sites") {
+            if (!JsonExpect(s, i, '[')) return false;
+            while (true) {
+                JsonSkipWs(s, i);
+                if (i < s.size() && s[i] == ']') { ++i; break; }
+                if (!JsonExpect(s, i, '{')) return false;
+                IrSite site;
+                while (true) {
+                    JsonSkipWs(s, i);
+                    if (i < s.size() && s[i] == '}') { ++i; break; }
+                    std::string k;
+                    if (!JsonParseString(s, i, k)) return false;
+                    if (!JsonExpect(s, i, ':')) return false;
+                    if (k == "site_id") {
+                        long long v = 0; JsonParseInt(s, i, v); site.site_id = static_cast<int>(v);
+                    } else if (k == "func_id") {
+                        long long v = 0; JsonParseInt(s, i, v); site.func_id = static_cast<int>(v);
+                    } else if (k == "callee") {
+                        JsonParseString(s, i, site.callee);
+                    } else if (k == "core_type") {
+                        JsonParseString(s, i, site.core_type);
+                    } else if (k == "tensors") {
+                        if (!JsonExpect(s, i, '[')) return false;
+                        while (true) {
+                            JsonSkipWs(s, i);
+                            if (i < s.size() && s[i] == ']') { ++i; break; }
+                            if (!JsonExpect(s, i, '{')) return false;
+                            IrTensorRef t;
+                            while (true) {
+                                JsonSkipWs(s, i);
+                                if (i < s.size() && s[i] == '}') { ++i; break; }
+                                std::string tk;
+                                if (!JsonParseString(s, i, tk)) return false;
+                                if (!JsonExpect(s, i, ':')) return false;
+                                if (tk == "root") JsonParseString(s, i, t.root);
+                                else if (tk == "dir") JsonParseString(s, i, t.dir);
+                                else JsonSkipValue(s, i);
+                                JsonSkipWs(s, i);
+                                if (i < s.size() && s[i] == ',') { ++i; continue; }
+                            }
+                            site.tensors.push_back(std::move(t));
+                            JsonSkipWs(s, i);
+                            if (i < s.size() && s[i] == ',') { ++i; continue; }
+                        }
+                    } else {
+                        JsonSkipValue(s, i);
+                    }
+                    JsonSkipWs(s, i);
+                    if (i < s.size() && s[i] == ',') { ++i; continue; }
+                }
+                sites_out.push_back(std::move(site));
+                JsonSkipWs(s, i);
+                if (i < s.size() && s[i] == ',') { ++i; continue; }
+            }
+        } else {
+            JsonSkipValue(s, i);
+        }
+        JsonSkipWs(s, i);
+        if (i < s.size() && s[i] == ',') { ++i; continue; }
+    }
+    return true;
+}
+
+}  // namespace
 
 // =============================================================================
 // ProfMemoryManager Implementation
@@ -1246,6 +1438,144 @@ int PerformanceCollector::export_swimlane_json(const std::string &output_path_ar
     std::strftime(time_buffer, sizeof(time_buffer), "%Y%m%d_%H%M%S", timeinfo);
     std::string filepath = output_path + "/perf_swimlane_" + std::string(time_buffer) + ".json";
 
+    // Invert consumer-side fanin into producer-side fanout for swimlane edges.
+    // Fanin is recorded on the consumer at completion time from its own payload
+    // (race-free); inverting here gives every producer the complete successor
+    // list that the old producer-side traversal missed under the wire_task/
+    // early_finished race.
+    std::unordered_map<uint64_t, std::vector<uint64_t>> producer_to_consumers;
+    producer_to_consumers.reserve(tagged_records.size());
+    for (const auto &tagged : tagged_records) {
+        const auto &rec = *tagged.record;
+        int safe_fanin_count = (rec.fanin_count >= 0 && rec.fanin_count <= RUNTIME_MAX_FANIN) ? rec.fanin_count : 0;
+        for (int k = 0; k < safe_fanin_count; k++) {
+            producer_to_consumers[rec.fanin[k]].push_back(rec.task_id);
+        }
+    }
+
+    // Optional IR-side fanout reconstruction from codegen sidecar.
+    // The environment variable PYPTO_TASK_GRAPH_JSON points to the emitted
+    // `orchestration/task_graph.json` file. When present, we derive per-task
+    // IR-level fanout edges and emit them as a separate `fanout_ir` field
+    // alongside the runtime-observed `fanout`. This is lossless even when
+    // slot recycling deprives the runtime path of producer slot_state.
+    std::unordered_map<uint64_t, std::vector<uint64_t>> ir_fanout;
+    bool has_ir_fanout = false;
+    {
+        const char *task_graph_path = std::getenv("PYPTO_TASK_GRAPH_JSON");
+        if (task_graph_path != nullptr && task_graph_path[0] != '\0') {
+            std::vector<IrSite> sites;
+            if (!LoadTaskGraphSidecar(task_graph_path, sites)) {
+                LOG_WARN("IR task graph: failed to load %s — skipping fanout_ir", task_graph_path);
+            } else {
+                // Group PerfRecords by func_id, sorted by task_id (ring_id
+                // major, local_id minor — task_id's layout gives this for
+                // free since ring_id occupies the upper 32 bits).
+                std::unordered_map<int, std::vector<const PerfRecord *>> by_func;
+                for (const auto &tagged : tagged_records) {
+                    by_func[tagged.record->func_id].push_back(tagged.record);
+                }
+                for (auto &kv : by_func) {
+                    std::sort(kv.second.begin(), kv.second.end(),
+                              [](const PerfRecord *a, const PerfRecord *b) { return a->task_id < b->task_id; });
+                }
+
+                // Per-func site list (lexical order) from IR sidecar.
+                std::unordered_map<int, std::vector<const IrSite *>> ir_sites_by_func;
+                for (const auto &s : sites) {
+                    if (s.func_id >= 0) ir_sites_by_func[s.func_id].push_back(&s);
+                }
+
+                // Map: runtime PerfRecord -> its IR site's index within the
+                // same func_id. If runtime observed more tasks than sites
+                // (loop-expanded), wrap modulo the site count so each loop
+                // iteration matches the same tensor signature.
+                std::unordered_map<uint64_t, const IrSite *> rt_to_site;
+                for (auto &kv : by_func) {
+                    int func_id = kv.first;
+                    auto it = ir_sites_by_func.find(func_id);
+                    if (it == ir_sites_by_func.end() || it->second.empty()) continue;
+                    const auto &site_list = it->second;
+                    for (size_t k = 0; k < kv.second.size(); ++k) {
+                        const IrSite *site = site_list[k % site_list.size()];
+                        rt_to_site[kv.second[k]->task_id] = site;
+                    }
+                }
+
+                // Walk records in submit order; for each output/inout tensor
+                // root, remember the latest producer task_id. When a later
+                // task reads/inouts that root, emit a fanout edge from every
+                // producer of that root since the last overwrite.
+                //
+                // Conservative treatment of partial writes: slices are not
+                // derived here; an output site is assumed to overwrite the
+                // entire root. This yields a super-set of true edges, which
+                // is the correct direction for profiling (never lose an
+                // edge we could observe in-order).
+                // Order tasks by submit order (start_time as proxy, fall back
+                // to task_id). The task_id ordering alone already reflects
+                // submit order within a single func_id, but cross-func_id
+                // ordering needs the temporal tiebreaker.
+                std::vector<const PerfRecord *> submit_ordered;
+                submit_ordered.reserve(tagged_records.size());
+                for (const auto &tagged : tagged_records) submit_ordered.push_back(tagged.record);
+                std::sort(submit_ordered.begin(), submit_ordered.end(),
+                          [](const PerfRecord *a, const PerfRecord *b) {
+                              if (a->start_time != b->start_time) return a->start_time < b->start_time;
+                              return a->task_id < b->task_id;
+                          });
+
+                // Also track which site_id produced each root entry so we
+                // can skip same-site edges (loop iterations of a parallel
+                // loop operate on disjoint slices).
+                struct ProducerEntry {
+                    uint64_t task_id;
+                    int site_id;
+                };
+                std::unordered_map<std::string, std::vector<ProducerEntry>> root_producer_entries;
+
+                for (const PerfRecord *rec : submit_ordered) {
+                    auto it = rt_to_site.find(rec->task_id);
+                    if (it == rt_to_site.end()) continue;
+                    const IrSite *site = it->second;
+                    // Inputs first: connect to all current producers of that root,
+                    // skipping producers from the same IR site (parallel loop iterations).
+                    for (const auto &t : site->tensors) {
+                        if (t.dir == "in" || t.dir == "inout") {
+                            auto pit = root_producer_entries.find(t.root);
+                            if (pit != root_producer_entries.end()) {
+                                for (const auto &pe : pit->second) {
+                                    if (pe.task_id != rec->task_id && pe.site_id != site->site_id) {
+                                        ir_fanout[pe.task_id].push_back(rec->task_id);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    // Then outputs: overwrite producer set; inout appends.
+                    for (const auto &t : site->tensors) {
+                        if (t.dir == "out") {
+                            root_producer_entries[t.root].clear();
+                            root_producer_entries[t.root].push_back({rec->task_id, site->site_id});
+                        } else if (t.dir == "inout") {
+                            root_producer_entries[t.root].push_back({rec->task_id, site->site_id});
+                        }
+                    }
+                }
+
+                // De-duplicate.
+                for (auto &kv : ir_fanout) {
+                    std::sort(kv.second.begin(), kv.second.end());
+                    kv.second.erase(std::unique(kv.second.begin(), kv.second.end()), kv.second.end());
+                }
+                has_ir_fanout = true;
+                LOG_INFO(
+                    "IR task graph: loaded %zu sites, reconstructed %zu producer fanout lists", sites.size(),
+                    ir_fanout.size());
+            }
+        }
+    }
+
     // Step 6: Open JSON file for writing
     std::ofstream outfile(filepath);
     if (!outfile.is_open()) {
@@ -1254,7 +1584,13 @@ int PerformanceCollector::export_swimlane_json(const std::string &output_path_ar
     }
 
     // Step 7: Write JSON data
-    int version = has_phase_data_ ? 2 : 1;
+    // Version 3: PerfRecord switched from producer-side fanout[] to consumer-side
+    // fanin[] (host inverts to fanout for swimlane). JSON adds fanin_count and
+    // fanin_actual_count_raw fields per task for diagnosing truncation/spill.
+    // Version 4: adds per-task `fanout_ir` / `fanout_ir_count` when the IR
+    // task-graph sidecar (PYPTO_TASK_GRAPH_JSON) is loaded; recovers edges the
+    // ring-buffer runtime loses under slot recycling.
+    int version = has_ir_fanout ? 4 : (has_phase_data_ ? 3 : 1);
     outfile << "{\n";
     outfile << "  \"version\": " << version << ",\n";
     outfile << "  \"tasks\": [\n";
@@ -1284,16 +1620,37 @@ int PerformanceCollector::export_swimlane_json(const std::string &output_path_ar
         outfile << "      \"dispatch_time_us\": " << std::fixed << std::setprecision(3) << dispatch_us << ",\n";
         outfile << "      \"finish_time_us\": " << std::fixed << std::setprecision(3) << finish_us << ",\n";
         outfile << "      \"fanout\": [";
-        int safe_fanout_count =
-            (record.fanout_count >= 0 && record.fanout_count <= RUNTIME_MAX_FANOUT) ? record.fanout_count : 0;
-        for (int j = 0; j < safe_fanout_count; ++j) {
-            outfile << record.fanout[j];
-            if (j < safe_fanout_count - 1) {
-                outfile << ", ";
+        const auto it = producer_to_consumers.find(record.task_id);
+        int fanout_emitted = 0;
+        if (it != producer_to_consumers.end()) {
+            const auto &successors = it->second;
+            for (size_t j = 0; j < successors.size(); ++j) {
+                if (j > 0) {
+                    outfile << ", ";
+                }
+                outfile << successors[j];
+                fanout_emitted++;
             }
         }
         outfile << "],\n";
-        outfile << "      \"fanout_count\": " << record.fanout_count << "\n";
+        outfile << "      \"fanout_count\": " << fanout_emitted << ",\n";
+        if (has_ir_fanout) {
+            outfile << "      \"fanout_ir\": [";
+            const auto ir_it = ir_fanout.find(record.task_id);
+            int ir_fanout_emitted = 0;
+            if (ir_it != ir_fanout.end()) {
+                const auto &succ = ir_it->second;
+                for (size_t j = 0; j < succ.size(); ++j) {
+                    if (j > 0) outfile << ", ";
+                    outfile << succ[j];
+                    ir_fanout_emitted++;
+                }
+            }
+            outfile << "],\n";
+            outfile << "      \"fanout_ir_count\": " << ir_fanout_emitted << ",\n";
+        }
+        outfile << "      \"fanin_count\": " << record.fanin_count << ",\n";
+        outfile << "      \"fanin_actual_count_raw\": " << record.fanin_actual_count_raw << "\n";
         outfile << "    }";
         if (i < tagged_records.size() - 1) {
             outfile << ",";

@@ -931,19 +931,19 @@ struct AicpuExecutor {
             uint64_t finish_ts = get_sys_cnt_aicpu();
             PerfBuffer *pbuf = reinterpret_cast<PerfBuffer *>(h->perf_records_addr);
 
-            uint64_t fanout_arr[RUNTIME_MAX_FANOUT];
-            int32_t fanout_n = 0;
-            PTO2DepListEntry *cur = slot_state.fanout_head;
-            while (cur != nullptr && fanout_n < RUNTIME_MAX_FANOUT) {
-                fanout_arr[fanout_n++] = cur->slot_state->task->task_id.raw;
-                cur = cur->next;
-            }
+            uint64_t fanin_arr[RUNTIME_MAX_FANIN];
+            int32_t fanin_n = 0;
+            pto2_for_each_fanin_slot_state(*slot_state.payload, [&](PTO2TaskSlotState *producer) {
+                if (fanin_n < RUNTIME_MAX_FANIN) {
+                    fanin_arr[fanin_n++] = producer->task->task_id.raw;
+                }
+            });
 
             int32_t perf_slot_idx = static_cast<int32_t>(subslot);
             if (perf_aicpu_complete_record(
                     pbuf, static_cast<uint32_t>(expected_reg_task_id), slot_state.task->task_id.raw,
                     slot_state.task->kernel_id[perf_slot_idx], hank[core_id].core_type, dispatch_ts, finish_ts,
-                    fanout_arr, fanout_n
+                    fanin_arr, fanin_n, slot_state.payload->fanin_actual_count
                 ) != 0) {
                 DEV_ERROR(
                     "Core %d: perf_aicpu_complete_record failed for task 0x%" PRIx64, core_id,

@@ -120,8 +120,8 @@ def read_perf_data(filepath):
             raise ValueError(f"Missing required field: {field}")
 
     # Validate version
-    if data["version"] not in [1, 2]:
-        raise ValueError(f"Unsupported version: {data['version']} (expected 1 or 2)")
+    if data["version"] not in [1, 2, 3, 4]:
+        raise ValueError(f"Unsupported version: {data['version']} (expected 1 to 4)")
 
     return data
 
@@ -440,6 +440,16 @@ def generate_chrome_trace_json(  # noqa: PLR0912, PLR0915
         print(f"  Tasks: {len(tasks)}")
         if func_id_to_name:
             print(f"  Function names: {len(func_id_to_name)} entries")
+
+    # Merge IR-derived fanout into runtime fanout when available (version 4+).
+    # fanout_ir is a superset of the true edges and recovers edges lost to
+    # ring-buffer slot recycling. We union both lists and deduplicate.
+    for task in tasks:
+        ir_fanout = task.get("fanout_ir")
+        if ir_fanout:
+            merged = sorted(set(task.get("fanout", [])) | set(ir_fanout))
+            task["fanout"] = merged
+            task["fanout_count"] = len(merged)
 
     # Step 1: Build core_to_tid mapping (using only core_id, not core_type)
     unique_cores = set()
