@@ -20,6 +20,7 @@
 #include "pto_orchestrator.h"
 
 #include <assert.h>
+#include <algorithm>
 #include <inttypes.h>
 #include <stdio.h>
 #include <stdarg.h>
@@ -677,6 +678,25 @@ pto2_submit_mixed_task(PTO2OrchestratorState *orch, const MixedKernels &mixed_ke
     for (int i = 0; i < inline_count; i++) {
         payload.fanin_inline_slot_states[i] = fanin_builder.inline_slots[i];
     }
+
+#if PTO2_PROFILING
+    // Resolve producer task_ids now while slot_states are still valid.
+    // After wiring, producers may complete and their slots may be recycled,
+    // making slot_state pointers stale. Consumer reads this at completion.
+    {
+        int32_t resolved = 0;
+        pto2_for_each_fanin_storage(
+            fanin_builder.inline_slots, fanin_builder.count, fanin_builder.spill_start, fanin_builder.spill_pool,
+            [&](PTO2TaskSlotState *prod) {
+                if (resolved < PTO2TaskPayload::kMaxFaninResolved) {
+                    payload.fanin_resolved_ids[resolved] = prod->task->task_id.raw;
+                }
+                resolved++;
+            }
+        );
+        payload.fanin_resolved_count = std::min(resolved, PTO2TaskPayload::kMaxFaninResolved);
+    }
+#endif
 
     payload.init(args, result, prepared.alloc_result, layout);
 

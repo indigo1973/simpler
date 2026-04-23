@@ -85,6 +85,7 @@ __aicore__ __attribute__((weak)) void aicore_execute(__gm__ Runtime *runtime, in
             }
 
             execute_task(task_ptr);
+            dcci(my_hank, SINGLE_CACHE_LINE);
 
             if (pmu_enabled) {
                 pmu_aicore_end();

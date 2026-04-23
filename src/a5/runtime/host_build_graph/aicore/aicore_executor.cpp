@@ -79,6 +79,7 @@ __aicore__ __attribute__((weak)) void aicore_execute(__gm__ Runtime *runtime, in
             uint64_t start_time = get_sys_cnt_aicore();
 
             execute_task(task_ptr);
+            dcci(my_hank, SINGLE_CACHE_LINE);
 
             if (dump_tensor_enabled) {
                 pipe_barrier(PIPE_ALL);
