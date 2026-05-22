@@ -57,14 +57,20 @@ static int s_orch_thread_idx = -1;
 // L2 perf platform state. Published by the host (via dlsym'd setters on sim)
 // or by the AICPU kernel entry (onboard) before perf init runs, so downstream
 // perf code can discover enablement + device-base without reading the generic
-// Runtime struct.
+// Runtime struct. Two channels (mirrors PMU):
+//   - g_enable_l2_swimlane (bool) — set at kernel entry from the bitmask bit
+//   - g_l2_perf_level (L2PerfLevel) — promoted in l2_perf_aicpu_init from the
+//     shared-memory header so `>= AICPU_TIMING / SCHED_PHASES / ORCH_PHASES`
+//     gates have the granular value (exposed via get_l2_perf_level()).
 static uint64_t g_platform_l2_perf_base = 0;
 static bool g_enable_l2_swimlane = false;
+static L2PerfLevel g_l2_perf_level = L2PerfLevel::DISABLED;
 
 extern "C" void set_platform_l2_perf_base(uint64_t l2_perf_data_base) { g_platform_l2_perf_base = l2_perf_data_base; }
 extern "C" uint64_t get_platform_l2_perf_base() { return g_platform_l2_perf_base; }
 extern "C" void set_l2_swimlane_enabled(bool enable) { g_enable_l2_swimlane = enable; }
 extern "C" bool is_l2_swimlane_enabled() { return g_enable_l2_swimlane; }
+L2PerfLevel get_l2_perf_level() { return g_l2_perf_level; }
 
 /**
  * Enqueue ready buffer to per-thread queue
@@ -109,7 +115,15 @@ void l2_perf_aicpu_init(int worker_count) {
 
     s_l2_perf_header = get_l2_perf_header(l2_perf_base);
 
-    LOG_INFO_V0("Initializing performance profiling for %d cores (memcpy-based)", worker_count);
+    // Read the granular perf_level from the shared-memory header (host wrote
+    // it in L2PerfCollector::initialize). The kernel-entry setter only seeded
+    // the binary g_enable_l2_swimlane via the bitmask bit.
+    g_l2_perf_level = static_cast<L2PerfLevel>(s_l2_perf_header->l2_perf_level);
+
+    LOG_INFO_V0(
+        "Initializing performance profiling for %d cores (memcpy-based), l2_perf_level=%u", worker_count,
+        static_cast<uint32_t>(g_l2_perf_level)
+    );
 
     // Pop first buffer from free_queue for each core, and cache the stable
     // AICore staging ring pointer so complete_record can read it without
@@ -295,16 +309,23 @@ int l2_perf_aicpu_complete_record(
     record->task_id = task_id;
     record->func_id = func_id;
     record->core_type = core_type;
-    record->dispatch_time = dispatch_time;
-    record->finish_time = finish_time;
 
-    if (fanout != nullptr && fanout_count > 0) {
-        int32_t n = (fanout_count > RUNTIME_MAX_FANOUT) ? RUNTIME_MAX_FANOUT : fanout_count;
-        for (int32_t i = 0; i < n; i++) {
-            record->fanout[i] = fanout[i];
+    // AICPU_TIMING and above: dispatch/finish timing and fanout dependency info
+    if (g_l2_perf_level >= L2PerfLevel::AICPU_TIMING) {
+        record->dispatch_time = dispatch_time;
+        record->finish_time = finish_time;
+        if (fanout != nullptr && fanout_count > 0) {
+            int32_t n = (fanout_count > RUNTIME_MAX_FANOUT) ? RUNTIME_MAX_FANOUT : fanout_count;
+            for (int32_t i = 0; i < n; i++) {
+                record->fanout[i] = fanout[i];
+            }
+            record->fanout_count = n;
+        } else {
+            record->fanout_count = 0;
         }
-        record->fanout_count = n;
     } else {
+        record->dispatch_time = 0;
+        record->finish_time = 0;
         record->fanout_count = 0;
     }
 
@@ -501,11 +522,12 @@ void l2_perf_aicpu_record_phase(
     }
 
     PhaseBufferState *state = s_phase_buffer_states[thread_idx];
-    if (state == nullptr) return;
+    if (state == nullptr) {
+        return;
+    }
 
-    // Account every commit attempt before any drop path so reconcile
-    // (collected + dropped + mismatch == total) holds. PHASE has no
-    // ring/AICore staging path so mismatch stays 0 here.
+    // Account every commit attempt up front so host can detect silent loss
+    // as `device_total - (collected + dropped)` (mirrors PERF accounting).
     state->total_record_count += 1;
 
     PhaseBuffer *buf = s_current_phase_buf[thread_idx];
@@ -532,8 +554,7 @@ void l2_perf_aicpu_record_phase(
         }
         if (buf == nullptr) {
             state->dropped_record_count += 1;
-            wmb();
-            return;  // Still no buffer available
+            return;
         }
     }
 
@@ -545,14 +566,12 @@ void l2_perf_aicpu_record_phase(
         buf = s_current_phase_buf[thread_idx];
         if (buf == nullptr) {
             state->dropped_record_count += 1;
-            wmb();
-            return;  // No buffer available
+            return;
         }
         idx = buf->count;
         if (idx >= PLATFORM_PHASE_RECORDS_PER_THREAD) {
             state->dropped_record_count += 1;
-            wmb();
-            return;  // Switch failed; drop this record
+            return;
         }
     }
 
@@ -566,7 +585,6 @@ void l2_perf_aicpu_record_phase(
     record->extra2 = extra2;
 
     buf->count = idx + 1;
-    wmb();
 }
 
 void l2_perf_aicpu_set_orch_thread_idx(int thread_idx) { s_orch_thread_idx = thread_idx; }
