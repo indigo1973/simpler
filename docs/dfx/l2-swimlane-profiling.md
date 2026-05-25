@@ -62,13 +62,6 @@ backward-compatible with the old boolean behavior).
 | 3 | + Scheduler phases (`SCHED_*`) | Skips orchestrator phases |
 | 4 | + Orchestrator phases | Full collection |
 
-> **Platform scope.** The tiered perf_level is currently
-> implemented on **a2a3 only**. The a5 backend (both `a5` onboard
-> and `a5sim`) has not been updated and still interprets
-> `--enable-l2-swimlane` as a plain boolean: bare flag = on,
-> absent = off. Passing an integer to a5 is silently treated as
-> "on" regardless of value.
-
 ```bash
 # Standalone runner — full collection (level 4)
 python tests/st/<case>/test_<name>.py -p a2a3 -d 0 --enable-l2-swimlane
@@ -82,9 +75,9 @@ python tests/st/<case>/test_<name>.py -p a2a3 -d 0 --enable-l2-swimlane 2
 # pytest — scheduler phases (level 3)
 pytest tests/st/<case> --platform a2a3 -d 0 --enable-l2-swimlane 3
 
-# a5 onboard / a5sim — boolean only (perf_level integer not honored on a5 yet)
-python tests/st/<case>/test_<name>.py -p a5 -d 0 --enable-l2-swimlane
-python tests/st/<case>/test_<name>.py -p a5sim --enable-l2-swimlane
+# a5 onboard / a5sim — same integer perf_level interface as a2a3
+python tests/st/<case>/test_<name>.py -p a5 -d 0 --enable-l2-swimlane 4
+python tests/st/<case>/test_<name>.py -p a5sim --enable-l2-swimlane 2
 ```
 
 The flag sets `CallConfig::enable_l2_swimlane` to the chosen
