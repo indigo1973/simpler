@@ -226,9 +226,12 @@ void l2_swimlane_aicpu_init(int worker_count) {
             s_current_aicpu_task_buffers[i] = nullptr;
         }
 
-        // Prime the AICore head channel with the initial buffer. Seq starts
-        // at 0; AICore's local `cached_buf_seq` defaults to UINT32_MAX so the
-        // first record_task call observes a mismatch and loads the buffer.
+        // Prime the AICore head channel with the initial buffer. head.current_buf_ptr
+        // is the source of truth for the per-core rotating buffer: tensormap_and_
+        // ringbuffer reads it AICPU-side (dispatch stamps it into the payload),
+        // host_build_graph reads it AICore-side via the head channel. (current_buf_seq
+        // is still published for ABI/host_build_graph compatibility; the AICore
+        // record path now detects rotation by the buffer pointer changing.)
         rmb();
         uint32_t ac_head = ac_state->free_queue.head;
         uint32_t ac_tail = ac_state->free_queue.tail;
@@ -442,6 +445,21 @@ void l2_swimlane_aicpu_on_aicore_dispatch(int core_id, int thread_idx) {
     }
     s_aicore_dispatched_count[core_id] = prev + 1;
     ac_state->head.total_record_count += 1;
+}
+
+uint64_t l2_swimlane_aicpu_current_aicore_buf(int core_id) {
+    if (!g_enable_l2_swimlane || core_id < 0 || core_id >= PLATFORM_MAX_CORES) {
+        return 0;
+    }
+    L2SwimlaneAicoreTaskPool *ac_state = s_aicore_task_pools[core_id];
+    if (ac_state == nullptr) {
+        return 0;
+    }
+    // Source of truth for the per-core rotating record buffer. AICPU owns
+    // rotation (see l2_swimlane_aicpu_on_aicore_dispatch -> aicore_rotate);
+    // the dispatch path stamps this into the per-task payload so AICore reads
+    // it locally instead of polling head.current_buf_ptr cross-core.
+    return ac_state->head.current_buf_ptr;
 }
 
 int l2_swimlane_aicpu_complete_task(

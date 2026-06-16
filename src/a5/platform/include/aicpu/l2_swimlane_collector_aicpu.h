@@ -105,6 +105,15 @@ void l2_swimlane_aicpu_init(int worker_count);
 void l2_swimlane_aicpu_on_aicore_dispatch(int core_id, int thread_idx);
 
 /**
+ * Return the current per-core AICore record buffer (GM device ptr) that
+ * `on_aicore_dispatch` rotation maintains, or 0 if swimlane is disabled /
+ * core_id is out of range. The scheduler dispatch path stamps this into the
+ * per-task PTO2DispatchPayload so AICore reads its rotating buffer from the
+ * already-dcci'd payload instead of polling the shared head line cross-core.
+ */
+uint64_t l2_swimlane_aicpu_current_aicore_buf(int core_id);
+
+/**
  * Commit an AICPU-side timing record for one completed task.
  *
  * AICore-as-producer: identity (task_token_raw) and AICore-side timing

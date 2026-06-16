@@ -101,12 +101,12 @@ __aicore__ __attribute__((weak)) void aicore_execute(__gm__ Runtime *runtime, in
     bool l2_swimlane_enabled = GET_PROFILING_FLAG(profiling_flag, PROFILING_FLAG_L2_SWIMLANE);
     bool dump_tensor_enabled = GET_PROFILING_FLAG(profiling_flag, PROFILING_FLAG_DUMP_TENSOR);
     bool pmu_enabled = GET_PROFILING_FLAG(profiling_flag, PROFILING_FLAG_PMU);
-    // Per-core L2SwimlaneActiveHead channel — lazy-resolved on first task; the
-    // table slot AICPU populates inside `l2_swimlane_aicpu_init` runs
-    // concurrently with kernel entry, so we cannot deref at startup. The
-    // first dispatch is proof AICPU init is done.
-    __gm__ L2SwimlaneActiveHead *l2_swimlane_head = nullptr;
-    L2SwimlaneAicoreLocalState l2_swimlane_local = {nullptr, UINT32_MAX, 0};
+    // Per-core AICore record state. The current rotating record buffer is
+    // delivered per task through the dispatch payload (l2_swimlane_cur_buf_ptr,
+    // set by the AICPU dispatch path after its rotation hook); AICore detects
+    // rotation by the buffer pointer changing and never reads a shared
+    // AICPU-written channel (that cross-core read wedged the a5 FIN handshake).
+    L2SwimlaneAicoreLocalState l2_swimlane_local = {nullptr, 0};
     __gm__ PmuAicoreRing *pmu_ring = pmu_enabled ? get_aicore_pmu_ring() : nullptr;
     uint64_t pmu_reg_base = pmu_enabled ? get_aicore_pmu_reg_base() : 0;
 
@@ -131,11 +131,6 @@ __aicore__ __attribute__((weak)) void aicore_execute(__gm__ Runtime *runtime, in
 
         {
             uint32_t task_id = reg_val;  // Decode: register holds task_id directly
-
-            // First-task lazy resolve of the rotation channel.
-            if (l2_swimlane_enabled && l2_swimlane_head == nullptr) {
-                l2_swimlane_head = get_l2_swimlane_aicore_head();
-            }
 
             // Select dual-buffer slot: same bit as AICPU used when writing payload
             __gm__ PTO2DispatchPayload *exec_payload = payload + (task_id & 1u);
@@ -172,7 +167,8 @@ __aicore__ __attribute__((weak)) void aicore_execute(__gm__ Runtime *runtime, in
                 uint64_t end_time = get_sys_cnt_aicore();
                 uint64_t task_token_raw = exec_payload->local_context.async_ctx.task_token.raw;
                 l2_swimlane_aicore_record_task(
-                    l2_swimlane_head, &l2_swimlane_local, task_token_raw, task_id, start_time, end_time
+                    exec_payload->l2_swimlane_cur_buf_ptr, &l2_swimlane_local, task_token_raw, task_id, start_time,
+                    end_time
                 );
             }
 
