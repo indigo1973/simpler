@@ -189,21 +189,28 @@ int DeviceRunner::run(Runtime &runtime, int block_dim, int launch_aicpu_num) {
     if (enable_dep_gen_) SET_PROFILING_FLAG(enable_profiling_flag, PROFILING_FLAG_DEP_GEN);
     if (enable_scope_stats_) SET_PROFILING_FLAG(enable_profiling_flag, PROFILING_FLAG_SCOPE_STATS);
     // TEMPORARY L2SW-PROBE2: a5 hardware-root-cause probe. Remove after the probe.
-    //   PTO_L2SW_PROBE=1 -> AICore extra-reads its OWN record line (region test)
-    //   PTO_L2SW_PROBE=2 -> AICore extra-reads the head line (positive control)
+    //   PTO_L2SW_PROBE=1 -> extra read of OWN record line, discard (no dsb)
+    //   PTO_L2SW_PROBE=2 -> extra read of head line, discard (no dsb)
+    //   PTO_L2SW_PROBE=3 -> extra read of head line + dsb (force completion), discard
+    //   PTO_L2SW_PROBE=4 -> extra read of OWN record line + dsb, discard (control for 3)
     if (enable_l2_swimlane_) {
         const char *probe = std::getenv("PTO_L2SW_PROBE");
         int mode = probe != nullptr ? std::atoi(probe) : 0;
         if (mode == 1) SET_PROFILING_FLAG(enable_profiling_flag, PROFILING_FLAG_L2SW_PROBE_READ_OWN);
         if (mode == 2) SET_PROFILING_FLAG(enable_profiling_flag, PROFILING_FLAG_L2SW_PROBE_READ_HEAD);
+        if (mode == 3) SET_PROFILING_FLAG(enable_profiling_flag, PROFILING_FLAG_L2SW_PROBE_HEAD_DSB);
+        if (mode == 4) SET_PROFILING_FLAG(enable_profiling_flag, PROFILING_FLAG_L2SW_PROBE_OWN_DSB);
         if (mode != 0) {
             LOG_WARN(
-                "[L2SW-PROBE2] mode=%d: AICore does an extra per-task dcci+load of %s. "
-                "Fixed baseline (unset) PASSes. mode=2 (head) should reproduce 507000; "
-                "mode=1 (own record line) tells us if reading the profiling region itself stalls.",
+                "[L2SW-PROBE2] mode=%d: extra per-task read (%s). Fixed baseline (unset) PASSes. "
+                "mode=3 (head+dsb) stalling => the cross-core head LOAD itself never completes; "
+                "mode=4 (own+dsb) is the control. 1/2 (no dsb) hide the load latency.",
                 mode,
-                mode == 1 ? "its OWN record line (profiling region, self-written)" :
-                            "the head line (profiling region, AICPU-written)"
+                mode == 1 ? "own record line, no dsb" :
+                mode == 2 ? "head line, no dsb" :
+                mode == 3 ? "head line + dsb (force completion)" :
+                mode == 4 ? "own record line + dsb (control)" :
+                            "?"
             );
         }
     }

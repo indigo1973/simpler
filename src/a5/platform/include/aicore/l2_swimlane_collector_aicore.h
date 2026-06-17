@@ -152,14 +152,37 @@ __aicore__ __attribute__((always_inline)) static inline void l2_swimlane_aicore_
         (void)probe_own;
     }
     if (GET_PROFILING_FLAG(l2sw_probe_flag, PROFILING_FLAG_L2SW_PROBE_READ_HEAD)) {
-        // Positive control: read the shared head line (profiling region,
-        // AICPU-written) — the exact toxic op from #983. Should reproduce 507000.
+        // Read the shared head line (profiling region, AICPU-written), discard.
+        // No dsb after — load is off the critical path, latency hidden.
         __gm__ L2SwimlaneActiveHead *probe_head = get_l2_swimlane_aicore_head();
         if (probe_head != nullptr) {
             dcci(probe_head, SINGLE_CACHE_LINE);
             volatile uint64_t probe_h = probe_head->current_buf_ptr;
             (void)probe_h;
         }
+    }
+    if (GET_PROFILING_FLAG(l2sw_probe_flag, PROFILING_FLAG_L2SW_PROBE_HEAD_DSB)) {
+        // Completion-timing test: read the head line then FORCE the load to
+        // complete with a dsb, discard the value. If this STALLS, the cross-core
+        // head load itself never completes on a5 (the dsb waits it out) — i.e.
+        // the hang is load-completion, not "using the value". If it PASSES, the
+        // load completes and the historical stall is the dependent-store ordering.
+        __gm__ L2SwimlaneActiveHead *probe_head = get_l2_swimlane_aicore_head();
+        if (probe_head != nullptr) {
+            dcci(probe_head, SINGLE_CACHE_LINE);
+            volatile uint64_t probe_h = probe_head->current_buf_ptr;
+            dsb((mem_dsb_t)0);
+            (void)probe_h;
+        }
+    }
+    if (GET_PROFILING_FLAG(l2sw_probe_flag, PROFILING_FLAG_L2SW_PROBE_OWN_DSB)) {
+        // Control for the dsb test: read AICore's OWN record line then dsb.
+        // If HEAD_DSB stalls but this PASSES -> only the cross-core (AICPU-written)
+        // head load fails to complete; a self-written line + dsb completes fine.
+        dcci(record, SINGLE_CACHE_LINE);
+        volatile uint64_t probe_own = record->start_time;
+        dsb((mem_dsb_t)0);
+        (void)probe_own;
     }
 }
 

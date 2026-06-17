@@ -217,6 +217,11 @@ inline double cycles_to_us(uint64_t cycles) {
 //               AICPU-written) — positive control, should reproduce 507000.
 #define PROFILING_FLAG_L2SW_PROBE_READ_OWN (1u << 8)
 #define PROFILING_FLAG_L2SW_PROBE_READ_HEAD (1u << 9)
+// + completion-timing test: same reads but FORCE completion with a dsb, to tell
+//   "the cross-core load never completes" (stall at dsb) from "it's the
+//   dependent-store ordering" (dsb returns, no stall).
+#define PROFILING_FLAG_L2SW_PROBE_HEAD_DSB (1u << 10)
+#define PROFILING_FLAG_L2SW_PROBE_OWN_DSB (1u << 11)
 #define GET_PROFILING_FLAG(flags, bit) ((((uint32_t)(flags)) & ((uint32_t)(bit))) != 0u)
 #define SET_PROFILING_FLAG(flags, bit) ((flags) |= (uint32_t)(bit))
 #define CLEAR_PROFILING_FLAG(flags, bit) ((flags) &= ~((uint32_t)(bit)))
