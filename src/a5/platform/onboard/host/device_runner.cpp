@@ -200,6 +200,7 @@ int DeviceRunner::run(Runtime &runtime, int block_dim, int launch_aicpu_num) {
         if (mode == 2) SET_PROFILING_FLAG(enable_profiling_flag, PROFILING_FLAG_L2SW_PROBE_READ_HEAD);
         if (mode == 3) SET_PROFILING_FLAG(enable_profiling_flag, PROFILING_FLAG_L2SW_PROBE_HEAD_DSB);
         if (mode == 4) SET_PROFILING_FLAG(enable_profiling_flag, PROFILING_FLAG_L2SW_PROBE_OWN_DSB);
+        if (mode == 5) SET_PROFILING_FLAG(enable_profiling_flag, PROFILING_FLAG_L2SW_PROBE_READBACK);
         if (mode != 0) {
             LOG_WARN(
                 "[L2SW-PROBE2] mode=%d: extra per-task read (%s). Fixed baseline (unset) PASSes. "

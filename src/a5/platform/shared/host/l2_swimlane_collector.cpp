@@ -470,6 +470,24 @@ void L2SwimlaneCollector::copy_aicore_buffer(const ReadyBufferInfo &info) {
             core_index, skipped, info.buffer_seq, count
         );
     }
+    // TEMPORARY L2SW-PROBE2 readback: in PTO_L2SW_PROBE=5, AICore stamped the
+    // head->current_buf_ptr value it read into record.task_token_raw. Compare it
+    // to this buffer's real device address to tell "bad value" from
+    // "address-dependent-store hazard". Remove with the probe.
+    {
+        const char *probe = std::getenv("PTO_L2SW_PROBE");
+        if (probe != nullptr && std::atoi(probe) == 5 && count > 0) {
+            uint64_t head_val = buf->records[0].task_token_raw;
+            uint64_t real_buf = reinterpret_cast<uint64_t>(info.dev_buffer_ptr);
+            LOG_WARN(
+                "[L2SW-PROBE2 readback] core=%u: AICore read head->current_buf_ptr=0x%lx ; "
+                "real current buffer dev=0x%lx -> %s",
+                core_index, static_cast<unsigned long>(head_val), static_cast<unsigned long>(real_buf),
+                head_val == real_buf ? "MATCH (head value CORRECT -> address-dependent-store hazard)" :
+                                       "MISMATCH (head value BAD -> write-to-bad-addr is the stall)"
+            );
+        }
+    }
 }
 
 void L2SwimlaneCollector::on_buffer_collected(const ReadyBufferInfo &info) {

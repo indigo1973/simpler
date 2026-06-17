@@ -222,6 +222,11 @@ inline double cycles_to_us(uint64_t cycles) {
 //   dependent-store ordering" (dsb returns, no stall).
 #define PROFILING_FLAG_L2SW_PROBE_HEAD_DSB (1u << 10)
 #define PROFILING_FLAG_L2SW_PROBE_OWN_DSB (1u << 11)
+// + readback: AICore reads head->current_buf_ptr and stamps the read value into
+//   record->task_token_raw (record still written to the SAFE payload buffer, no
+//   stall); host prints it. Tells "bad value" (0/garbage) from "address-dependent
+//   store hazard" (value == real buffer).
+#define PROFILING_FLAG_L2SW_PROBE_READBACK (1u << 12)
 #define GET_PROFILING_FLAG(flags, bit) ((((uint32_t)(flags)) & ((uint32_t)(bit))) != 0u)
 #define SET_PROFILING_FLAG(flags, bit) ((flags) |= (uint32_t)(bit))
 #define CLEAR_PROFILING_FLAG(flags, bit) ((flags) &= ~((uint32_t)(bit)))

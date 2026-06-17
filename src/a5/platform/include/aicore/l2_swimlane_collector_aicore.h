@@ -175,6 +175,22 @@ __aicore__ __attribute__((always_inline)) static inline void l2_swimlane_aicore_
             (void)probe_h;
         }
     }
+    if (GET_PROFILING_FLAG(l2sw_probe_flag, PROFILING_FLAG_L2SW_PROBE_READBACK)) {
+        // Readback: read the head value (cross-core) and STAMP it into this
+        // record's task_token_raw so the host can see what AICore actually read.
+        // The record lives in the SAFE payload buffer, so this extra write does
+        // not stall. If host sees 0/garbage -> bad value (write-to-bad-addr is
+        // the historical stall); if it sees the real current buffer -> the value
+        // is fine and the stall is the address-dependent-store hazard.
+        __gm__ L2SwimlaneActiveHead *probe_head = get_l2_swimlane_aicore_head();
+        if (probe_head != nullptr) {
+            dcci(probe_head, SINGLE_CACHE_LINE);
+            uint64_t hv = probe_head->current_buf_ptr;
+            record->task_token_raw = hv;
+            dcci(record, SINGLE_CACHE_LINE, CACHELINE_OUT);
+            dsb((mem_dsb_t)0);
+        }
+    }
     if (GET_PROFILING_FLAG(l2sw_probe_flag, PROFILING_FLAG_L2SW_PROBE_OWN_DSB)) {
         // Control for the dsb test: read AICore's OWN record line then dsb.
         // If HEAD_DSB stalls but this PASSES -> only the cross-core (AICPU-written)
