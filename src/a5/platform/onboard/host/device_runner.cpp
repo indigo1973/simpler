@@ -26,6 +26,7 @@
 
 #include <cassert>
 #include <cstddef>
+#include <cstdlib>  // L2SW-REPRO: std::getenv / std::atoi (remove with the repro toggle)
 #include <cstring>
 #include <iostream>
 #include <string>
@@ -187,6 +188,30 @@ int DeviceRunner::run(Runtime &runtime, int block_dim, int launch_aicpu_num) {
     if (enable_pmu_) SET_PROFILING_FLAG(enable_profiling_flag, PROFILING_FLAG_PMU);
     if (enable_dep_gen_) SET_PROFILING_FLAG(enable_profiling_flag, PROFILING_FLAG_DEP_GEN);
     if (enable_scope_stats_) SET_PROFILING_FLAG(enable_profiling_flag, PROFILING_FLAG_SCOPE_STATS);
+    // --- TEMPORARY L2SW-REPRO: #983-regression repro toggle. Remove after
+    // the hardware-cause verification is done. Active only with L2 swimlane on.
+    //   PTO_L2SW_REPRO=1 -> AICore reads cross-core head AND AICPU writes the
+    //                       head line every dispatch (the exact #983 behavior).
+    //   PTO_L2SW_REPRO=2 -> AICore reads cross-core head but AICPU does NOT
+    //                       write the head line per dispatch (controlled A/B).
+    if (enable_l2_swimlane_) {
+        const char *repro_env = std::getenv("PTO_L2SW_REPRO");
+        int repro_mode = repro_env != nullptr ? std::atoi(repro_env) : 0;
+        if (repro_mode == 1 || repro_mode == 2) {
+            SET_PROFILING_FLAG(enable_profiling_flag, PROFILING_FLAG_L2SW_REPRO_HEAD_READ);
+        }
+        if (repro_mode == 2) {
+            SET_PROFILING_FLAG(enable_profiling_flag, PROFILING_FLAG_L2SW_REPRO_NO_HEAD_WRITE);
+        }
+        if (repro_mode != 0) {
+            LOG_WARN(
+                "[L2SW-REPRO] mode=%d ACTIVE: AICore reads cross-core head (current_buf_ptr); "
+                "AICPU per-dispatch head write (total_record_count++) = %s. "
+                "Expect a5 mode=1 to HANG (scheduler_timeout/507000), a5 mode=2 to COMPLETE.",
+                repro_mode, repro_mode == 2 ? "SUPPRESSED" : "ON"
+            );
+        }
+    }
     kernel_args_.args.enable_profiling_flag = enable_profiling_flag;
 
     if (prepare_runtime_for_launch(runtime, block_dim, launch_aicpu_num) != 0) return -1;

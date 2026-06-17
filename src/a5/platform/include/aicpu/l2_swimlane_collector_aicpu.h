@@ -45,6 +45,8 @@ extern "C" void set_platform_l2_swimlane_base(uint64_t l2_swimlane_data_base);
 extern "C" uint64_t get_platform_l2_swimlane_base();
 extern "C" void set_l2_swimlane_enabled(bool enable);
 extern "C" bool is_l2_swimlane_enabled();
+// TEMPORARY L2SW-REPRO: remove with the repro toggle.
+extern "C" void set_l2_swimlane_repro_no_head_write(bool enable);
 
 // AICore head-table device pointer (= KernelArgs::l2_swimlane_aicore_rotation_table).
 // Published by the host before AICPU init runs; AICPU init fills the table

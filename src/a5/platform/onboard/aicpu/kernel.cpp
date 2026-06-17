@@ -108,6 +108,10 @@ extern "C" __attribute__((visibility("default"))) int simpler_aicpu_exec(void *a
     set_dump_tensor_enabled(GET_PROFILING_FLAG(k_args->enable_profiling_flag, PROFILING_FLAG_DUMP_TENSOR));
     set_platform_l2_swimlane_base(k_args->l2_swimlane_data_base);
     set_l2_swimlane_enabled(GET_PROFILING_FLAG(k_args->enable_profiling_flag, PROFILING_FLAG_L2_SWIMLANE));
+    // TEMPORARY L2SW-REPRO: remove with the repro toggle.
+    set_l2_swimlane_repro_no_head_write(
+        GET_PROFILING_FLAG(k_args->enable_profiling_flag, PROFILING_FLAG_L2SW_REPRO_NO_HEAD_WRITE)
+    );
     set_platform_pmu_base(k_args->pmu_data_base);
     set_pmu_enabled(GET_PROFILING_FLAG(k_args->enable_profiling_flag, PROFILING_FLAG_PMU));
     set_platform_dep_gen_base(k_args->dep_gen_data_base);

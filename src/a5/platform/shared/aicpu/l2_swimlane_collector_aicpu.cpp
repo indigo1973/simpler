@@ -88,6 +88,11 @@ static int s_orch_thread_idx = -1;
 static uint64_t g_platform_l2_swimlane_base = 0;
 static bool g_enable_l2_swimlane = false;
 static L2SwimlaneLevel g_l2_swimlane_level = L2SwimlaneLevel::DISABLED;
+// TEMPORARY L2SW-REPRO: when true, on_aicore_dispatch skips the per-dispatch
+// head-line write (total_record_count++) so the controlled A/B can isolate
+// "concurrent write to the head line" from "AICore reading GM". Remove after
+// verification.
+static bool g_l2sw_repro_no_head_write = false;
 
 // AICore rotation-table device pointer (= KernelArgs::l2_swimlane_aicore_rotation_table).
 // Published by the host (sim: dlsym'd setter; onboard: from k_args via the
@@ -100,6 +105,8 @@ extern "C" void set_platform_l2_swimlane_base(uint64_t l2_swimlane_data_base) {
 extern "C" uint64_t get_platform_l2_swimlane_base() { return g_platform_l2_swimlane_base; }
 extern "C" void set_l2_swimlane_enabled(bool enable) { g_enable_l2_swimlane = enable; }
 extern "C" bool is_l2_swimlane_enabled() { return g_enable_l2_swimlane; }
+// TEMPORARY L2SW-REPRO: remove with the repro toggle.
+extern "C" void set_l2_swimlane_repro_no_head_write(bool enable) { g_l2sw_repro_no_head_write = enable; }
 extern "C" void set_platform_l2_swimlane_aicore_rotation_table(uint64_t table_addr) {
     g_platform_l2_swimlane_aicore_rotation_table = table_addr;
 }
@@ -444,7 +451,12 @@ void l2_swimlane_aicpu_on_aicore_dispatch(int core_id, int thread_idx) {
         aicore_rotate(core_id, thread_idx);
     }
     s_aicore_dispatched_count[core_id] = prev + 1;
-    ac_state->head.total_record_count += 1;
+    // TEMPORARY L2SW-REPRO mode=2: skip the per-dispatch head-line write so the
+    // shared head line is no longer dirtied every dispatch. (Breaks the host
+    // collected+dropped==total reconcile — expected in this diagnostic mode.)
+    if (!g_l2sw_repro_no_head_write) {
+        ac_state->head.total_record_count += 1;
+    }
 }
 
 uint64_t l2_swimlane_aicpu_current_aicore_buf(int core_id) {

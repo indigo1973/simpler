@@ -107,6 +107,11 @@ __aicore__ __attribute__((weak)) void aicore_execute(__gm__ Runtime *runtime, in
     // rotation by the buffer pointer changing and never reads a shared
     // AICPU-written channel (that cross-core read wedged the a5 FIN handshake).
     L2SwimlaneAicoreLocalState l2_swimlane_local = {nullptr, 0};
+    // TEMPORARY L2SW-REPRO: when set, AICore reverts to reading the rotating
+    // buffer ptr cross-core from the shared head line (the #983 behavior) to
+    // reproduce the a5 FIN-handshake stall. Remove after verification.
+    bool l2sw_repro_head_read = GET_PROFILING_FLAG(profiling_flag, PROFILING_FLAG_L2SW_REPRO_HEAD_READ);
+    __gm__ L2SwimlaneActiveHead *l2sw_repro_head = nullptr;
     __gm__ PmuAicoreRing *pmu_ring = pmu_enabled ? get_aicore_pmu_ring() : nullptr;
     uint64_t pmu_reg_base = pmu_enabled ? get_aicore_pmu_reg_base() : 0;
 
@@ -166,9 +171,27 @@ __aicore__ __attribute__((weak)) void aicore_execute(__gm__ Runtime *runtime, in
             if (l2_swimlane_enabled) {
                 uint64_t end_time = get_sys_cnt_aicore();
                 uint64_t task_token_raw = exec_payload->local_context.async_ctx.task_token.raw;
+                uint64_t cur_buf_ptr;
+                if (l2sw_repro_head_read) {
+                    // TEMPORARY L2SW-REPRO: read the rotating buffer ptr cross-core
+                    // from the shared head line (AICPU writes this line every
+                    // dispatch). This dcci+load on a line AICPU concurrently
+                    // writes is the suspected a5 pipeline stall. Remove after
+                    // verification.
+                    if (l2sw_repro_head == nullptr) {
+                        l2sw_repro_head = get_l2_swimlane_aicore_head();
+                    }
+                    if (l2sw_repro_head != nullptr) {
+                        dcci(l2sw_repro_head, SINGLE_CACHE_LINE);
+                        cur_buf_ptr = l2sw_repro_head->current_buf_ptr;
+                    } else {
+                        cur_buf_ptr = 0;
+                    }
+                } else {
+                    cur_buf_ptr = exec_payload->l2_swimlane_cur_buf_ptr;
+                }
                 l2_swimlane_aicore_record_task(
-                    exec_payload->l2_swimlane_cur_buf_ptr, &l2_swimlane_local, task_token_raw, task_id, start_time,
-                    end_time
+                    cur_buf_ptr, &l2_swimlane_local, task_token_raw, task_id, start_time, end_time
                 );
             }
 
