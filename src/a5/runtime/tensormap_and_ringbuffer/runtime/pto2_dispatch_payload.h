@@ -81,16 +81,7 @@ struct alignas(64) PTO2DispatchPayload {
      *  args[SPMD_GLOBAL_CONTEXT_INDEX] points here. */
     GlobalContext global_context;
 
-    /** L2 swimlane: current per-core AICore record buffer (GM device ptr) for
-     *  THIS dispatch. Written by the scheduler dispatch path right after the
-     *  AICPU rotation hook (which owns rotation), and read by the AICore
-     *  executor straight out of the per-task dcci'd payload — so AICore learns
-     *  its rotating record buffer through this already-synchronized channel
-     *  instead of polling a shared AICPU-written `L2SwimlaneActiveHead` line
-     *  per task (that cross-core read wedges the a5 AIC->AICPU FIN handshake).
-     *  0 when swimlane is disabled (AICore gates on the profiling flag and
-     *  never reads it then). Reuses the former ABI pad — struct stays 512B. */
-    uint64_t l2_swimlane_cur_buf_ptr;
+    uint8_t reserved_payload_abi_pad[8];
 
     static_assert(sizeof(args[0]) == 8);
     static_assert(

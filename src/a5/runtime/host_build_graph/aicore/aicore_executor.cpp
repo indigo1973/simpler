@@ -66,7 +66,7 @@ __aicore__ __attribute__((weak)) void aicore_execute(__gm__ Runtime *runtime, in
     // Lazy resolve at first dispatch — AICPU init populates the rotation
     // table concurrently with kernel entry; first dispatch is proof init done.
     __gm__ L2SwimlaneActiveHead *l2_swimlane_head = nullptr;
-    L2SwimlaneAicoreLocalState l2_swimlane_local = {nullptr, 0};
+    L2SwimlaneAicoreLocalState l2_swimlane_local = {nullptr, UINT32_MAX, 0};
     __gm__ PmuAicoreRing *pmu_ring = pmu_enabled ? get_aicore_pmu_ring() : nullptr;
     uint64_t pmu_reg_base = pmu_enabled ? get_aicore_pmu_reg_base() : 0;
 
@@ -119,19 +119,8 @@ __aicore__ __attribute__((weak)) void aicore_execute(__gm__ Runtime *runtime, in
             // coincide and a single value covers both.
             if (l2_swimlane_enabled) {
                 uint64_t end_time = get_sys_cnt_aicore();
-                // host_build_graph keeps the shared-head rotation channel:
-                // dcci the head and read the current rotating buffer ptr to
-                // hand to the (now buf-ptr based) record helper. tensormap_and_
-                // ringbuffer instead gets this ptr from the dispatch payload to
-                // avoid the per-task cross-core head read (a5 FIN-handshake
-                // wedge); host_build_graph's path is unchanged here.
-                uint64_t cur_buf = 0;
-                if (l2_swimlane_head != nullptr) {
-                    dcci(l2_swimlane_head, SINGLE_CACHE_LINE);
-                    cur_buf = l2_swimlane_head->current_buf_ptr;
-                }
                 l2_swimlane_aicore_record_task(
-                    cur_buf, &l2_swimlane_local, static_cast<uint64_t>(actual_task_id),
+                    l2_swimlane_head, &l2_swimlane_local, static_cast<uint64_t>(actual_task_id),
                     static_cast<uint32_t>(actual_task_id), start_time, end_time
                 );
             }

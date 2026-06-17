@@ -205,6 +205,12 @@ inline double cycles_to_us(uint64_t cycles) {
 #define PROFILING_FLAG_PMU (1u << 2)
 #define PROFILING_FLAG_DEP_GEN (1u << 3)
 #define PROFILING_FLAG_SCOPE_STATS (1u << 4)
+// --- TEMPORARY L2SW-PROBE: a5 hardware-root-cause probe, driven by the
+// PTO_L2SW_PROBE_NO_DCCI env var (host reads it in device_runner). When set,
+// AICore SKIPS the per-task `dcci(head, SINGLE_CACHE_LINE)` before reading the
+// head — isolating "coherent re-fetch (dcci) every task" vs "the load itself"
+// as the a5 stall trigger. Remove after the probe. Default 0 = faithful repro.
+#define PROFILING_FLAG_L2SW_PROBE_NO_DCCI (1u << 8)
 #define GET_PROFILING_FLAG(flags, bit) ((((uint32_t)(flags)) & ((uint32_t)(bit))) != 0u)
 #define SET_PROFILING_FLAG(flags, bit) ((flags) |= (uint32_t)(bit))
 #define CLEAR_PROFILING_FLAG(flags, bit) ((flags) &= ~((uint32_t)(bit)))

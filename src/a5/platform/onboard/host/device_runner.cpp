@@ -26,6 +26,7 @@
 
 #include <cassert>
 #include <cstddef>
+#include <cstdlib>  // L2SW-PROBE: std::getenv / std::atoi (remove with the probe)
 #include <cstring>
 #include <iostream>
 #include <string>
@@ -187,6 +188,19 @@ int DeviceRunner::run(Runtime &runtime, int block_dim, int launch_aicpu_num) {
     if (enable_pmu_) SET_PROFILING_FLAG(enable_profiling_flag, PROFILING_FLAG_PMU);
     if (enable_dep_gen_) SET_PROFILING_FLAG(enable_profiling_flag, PROFILING_FLAG_DEP_GEN);
     if (enable_scope_stats_) SET_PROFILING_FLAG(enable_profiling_flag, PROFILING_FLAG_SCOPE_STATS);
+    // TEMPORARY L2SW-PROBE: a5 hardware-root-cause probe. Remove after the probe.
+    // PTO_L2SW_PROBE_NO_DCCI=1 makes AICore skip the per-task head dcci.
+    if (enable_l2_swimlane_) {
+        const char *probe = std::getenv("PTO_L2SW_PROBE_NO_DCCI");
+        if (probe != nullptr && std::atoi(probe) != 0) {
+            SET_PROFILING_FLAG(enable_profiling_flag, PROFILING_FLAG_L2SW_PROBE_NO_DCCI);
+            LOG_WARN(
+                "[L2SW-PROBE] PTO_L2SW_PROBE_NO_DCCI active: AICore will SKIP the per-task "
+                "dcci(head) before the cross-core read. baseline (unset) reproduces 507000; "
+                "if this run COMPLETES, the per-task coherent re-fetch (dcci) is the a5 stall trigger."
+            );
+        }
+    }
     kernel_args_.args.enable_profiling_flag = enable_profiling_flag;
 
     if (prepare_runtime_for_launch(runtime, block_dim, launch_aicpu_num) != 0) return -1;
