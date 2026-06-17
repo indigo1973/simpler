@@ -175,12 +175,6 @@ void SchedulerContext::dispatch_subtask_to_core(
 #if PTO2_PROFILING
     if (l2_swimlane_level_ != L2SwimlaneLevel::DISABLED) {
         l2_swimlane_aicpu_on_aicore_dispatch(core_id, thread_idx);
-        // Stamp the (post-rotation) current AICore record buffer into the
-        // payload so AICore reads it from its per-task dcci'd payload rather
-        // than polling the shared head.current_buf_ptr line cross-core (which
-        // wedges the a5 AIC->AICPU FIN handshake). Must run after the rotation
-        // hook above and before the wmb()/write_reg below.
-        payload.l2_swimlane_cur_buf_ptr = l2_swimlane_aicpu_current_aicore_buf(core_id);
     }
 #endif
 

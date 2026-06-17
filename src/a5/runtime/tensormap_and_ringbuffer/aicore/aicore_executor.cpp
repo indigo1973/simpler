@@ -101,17 +101,12 @@ __aicore__ __attribute__((weak)) void aicore_execute(__gm__ Runtime *runtime, in
     bool l2_swimlane_enabled = GET_PROFILING_FLAG(profiling_flag, PROFILING_FLAG_L2_SWIMLANE);
     bool dump_tensor_enabled = GET_PROFILING_FLAG(profiling_flag, PROFILING_FLAG_DUMP_TENSOR);
     bool pmu_enabled = GET_PROFILING_FLAG(profiling_flag, PROFILING_FLAG_PMU);
-    // Per-core AICore record state. The current rotating record buffer is
-    // delivered per task through the dispatch payload (l2_swimlane_cur_buf_ptr,
-    // set by the AICPU dispatch path after its rotation hook); AICore detects
-    // rotation by the buffer pointer changing and never reads a shared
-    // AICPU-written channel (that cross-core read wedged the a5 FIN handshake).
-    L2SwimlaneAicoreLocalState l2_swimlane_local = {nullptr, 0};
-    // TEMPORARY L2SW-REPRO: when set, AICore reverts to reading the rotating
-    // buffer ptr cross-core from the shared head line (the #983 behavior) to
-    // reproduce the a5 FIN-handshake stall. Remove after verification.
-    bool l2sw_repro_head_read = GET_PROFILING_FLAG(profiling_flag, PROFILING_FLAG_L2SW_REPRO_HEAD_READ);
-    __gm__ L2SwimlaneActiveHead *l2sw_repro_head = nullptr;
+    // Per-core L2SwimlaneActiveHead channel — lazy-resolved on first task; the
+    // table slot AICPU populates inside `l2_swimlane_aicpu_init` runs
+    // concurrently with kernel entry, so we cannot deref at startup. The
+    // first dispatch is proof AICPU init is done.
+    __gm__ L2SwimlaneActiveHead *l2_swimlane_head = nullptr;
+    L2SwimlaneAicoreLocalState l2_swimlane_local = {nullptr, UINT32_MAX, 0};
     __gm__ PmuAicoreRing *pmu_ring = pmu_enabled ? get_aicore_pmu_ring() : nullptr;
     uint64_t pmu_reg_base = pmu_enabled ? get_aicore_pmu_reg_base() : 0;
 
@@ -136,6 +131,11 @@ __aicore__ __attribute__((weak)) void aicore_execute(__gm__ Runtime *runtime, in
 
         {
             uint32_t task_id = reg_val;  // Decode: register holds task_id directly
+
+            // First-task lazy resolve of the rotation channel.
+            if (l2_swimlane_enabled && l2_swimlane_head == nullptr) {
+                l2_swimlane_head = get_l2_swimlane_aicore_head();
+            }
 
             // Select dual-buffer slot: same bit as AICPU used when writing payload
             __gm__ PTO2DispatchPayload *exec_payload = payload + (task_id & 1u);
@@ -171,27 +171,8 @@ __aicore__ __attribute__((weak)) void aicore_execute(__gm__ Runtime *runtime, in
             if (l2_swimlane_enabled) {
                 uint64_t end_time = get_sys_cnt_aicore();
                 uint64_t task_token_raw = exec_payload->local_context.async_ctx.task_token.raw;
-                uint64_t cur_buf_ptr;
-                if (l2sw_repro_head_read) {
-                    // TEMPORARY L2SW-REPRO: read the rotating buffer ptr cross-core
-                    // from the shared head line (AICPU writes this line every
-                    // dispatch). This dcci+load on a line AICPU concurrently
-                    // writes is the suspected a5 pipeline stall. Remove after
-                    // verification.
-                    if (l2sw_repro_head == nullptr) {
-                        l2sw_repro_head = get_l2_swimlane_aicore_head();
-                    }
-                    if (l2sw_repro_head != nullptr) {
-                        dcci(l2sw_repro_head, SINGLE_CACHE_LINE);
-                        cur_buf_ptr = l2sw_repro_head->current_buf_ptr;
-                    } else {
-                        cur_buf_ptr = 0;
-                    }
-                } else {
-                    cur_buf_ptr = exec_payload->l2_swimlane_cur_buf_ptr;
-                }
                 l2_swimlane_aicore_record_task(
-                    cur_buf_ptr, &l2_swimlane_local, task_token_raw, task_id, start_time, end_time
+                    l2_swimlane_head, &l2_swimlane_local, task_token_raw, task_id, start_time, end_time
                 );
             }
 
