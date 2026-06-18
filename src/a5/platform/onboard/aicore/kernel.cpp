@@ -73,6 +73,12 @@ __attribute__((weak)) __aicore__ __gm__ L2SwimlaneActiveHead *get_l2_swimlane_ai
     // for the head (inside the first-task branch of the dispatch poll) the
     // slot holds a valid device address.
     if (s_l2_swimlane_aicore_head == nullptr && s_l2_swimlane_aicore_head_slot != nullptr) {
+        // TEMPORARY L2SW-DBG (probe B): invalidate the slot's cache line before
+        // reading it, to test whether the null head is a stale/uncached read of
+        // the AICPU-written rotation table on a5. If this makes get_ resolve a
+        // valid head (dbg no longer 0xBEEF), the null was a missing-dcci
+        // coherency bug. Remove with the probe.
+        dcci(s_l2_swimlane_aicore_head_slot, SINGLE_CACHE_LINE);
         s_l2_swimlane_aicore_head = reinterpret_cast<__gm__ L2SwimlaneActiveHead *>(*s_l2_swimlane_aicore_head_slot);
     }
     return s_l2_swimlane_aicore_head;
