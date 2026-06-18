@@ -398,13 +398,13 @@ int DeviceRunner::run(Runtime &runtime, int block_dim, int launch_aicpu_num) {
         size_t dbg_bytes = static_cast<size_t>(l2sw_dbg_n) * sizeof(uint64_t);
         if (rtMemcpy(dbg.data(), dbg_bytes, l2sw_dbg_dev, dbg_bytes, RT_MEMCPY_DEVICE_TO_HOST) == 0) {
             for (int c = 0; c < l2sw_dbg_n; c++) {
-                if (dbg[c] != 0) {
-                    LOG_WARN(
-                        "[L2SW-DBG] core=%d: AICore read head->current_buf_ptr = 0x%lx "
-                        "(valid AICore buffer addr looks like 0x1000xxxxxxxx)",
-                        c, static_cast<unsigned long>(dbg[c])
-                    );
-                }
+                uint64_t v = dbg[c];
+                const char *meaning =
+                    v == 0         ? "0 = capture never ran (AICore stalled before record path)" :
+                    v == 0xDEADULL ? "0xDEAD = capture ran, head current_buf_ptr READ STALLED (never returned)" :
+                    v == 0xBEEFULL ? "0xBEEF = get_l2_swimlane_aicore_head() returned NULL (null-head deref)" :
+                                     "head->current_buf_ptr value (valid buffer looks like 0x1000xxxxxxxx)";
+                LOG_WARN("[L2SW-DBG] core=%d: dbg=0x%lx -> %s", c, static_cast<unsigned long>(v), meaning);
             }
         }
         rtFree(l2sw_dbg_dev);

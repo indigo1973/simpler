@@ -174,11 +174,23 @@ __aicore__ __attribute__((weak)) void aicore_execute(__gm__ Runtime *runtime, in
                 // record_task does its (possibly stalling) write — so the host can
                 // see the value even on the 507000 run. Remove with the probe.
                 __gm__ uint64_t *l2sw_dbg = get_l2sw_dbg_slot();
-                if (l2sw_dbg != nullptr && l2_swimlane_head != nullptr) {
-                    dcci(l2_swimlane_head, SINGLE_CACHE_LINE);
-                    *l2sw_dbg = l2_swimlane_head->current_buf_ptr;
+                if (l2sw_dbg != nullptr) {
+                    // Sentinel first: 0xDEAD = "capture reached". If the head
+                    // current_buf_ptr read below stalls, dbg stays 0xDEAD.
+                    *l2sw_dbg = 0xDEADULL;
                     dcci(l2sw_dbg, SINGLE_CACHE_LINE, CACHELINE_OUT);
                     dsb((mem_dsb_t)0);
+                    if (l2_swimlane_head == nullptr) {
+                        *l2sw_dbg = 0xBEEFULL;  // get_l2_swimlane_aicore_head() returned NULL
+                        dcci(l2sw_dbg, SINGLE_CACHE_LINE, CACHELINE_OUT);
+                        dsb((mem_dsb_t)0);
+                    } else {
+                        dcci(l2_swimlane_head, SINGLE_CACHE_LINE);
+                        uint64_t v = l2_swimlane_head->current_buf_ptr;  // if THIS stalls, dbg stays 0xDEAD
+                        *l2sw_dbg = v;
+                        dcci(l2sw_dbg, SINGLE_CACHE_LINE, CACHELINE_OUT);
+                        dsb((mem_dsb_t)0);
+                    }
                 }
                 uint64_t end_time = get_sys_cnt_aicore();
                 uint64_t task_token_raw = exec_payload->local_context.async_ctx.task_token.raw;
