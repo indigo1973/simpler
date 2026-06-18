@@ -407,6 +407,25 @@ int DeviceRunner::run(Runtime &runtime, int block_dim, int launch_aicpu_num) {
                 LOG_WARN("[L2SW-DBG] core=%d: dbg=0x%lx -> %s", c, static_cast<unsigned long>(v), meaning);
             }
         }
+        // TEMPORARY L2SW-DBG (probe A): dump the rotation table the host set +
+        // its device contents, to tell apart: slot-pointer-null (rotation_table
+        // == 0) / table-entry-0 (AICPU init didn't fill) / valid-but-AICore-
+        // mis-indexed (entries valid but AICore still read null). Remove w/ probe.
+        uint64_t rot = kernel_args_.args.l2_swimlane_aicore_rotation_table;
+        LOG_WARN("[L2SW-DBG-A] KernelArgs.l2_swimlane_aicore_rotation_table = 0x%lx", static_cast<unsigned long>(rot));
+        if (rot != 0) {
+            std::vector<uint64_t> ht(l2sw_dbg_n, 0);
+            size_t ht_bytes = static_cast<size_t>(l2sw_dbg_n) * sizeof(uint64_t);
+            if (rtMemcpy(ht.data(), ht_bytes, reinterpret_cast<void *>(rot), ht_bytes, RT_MEMCPY_DEVICE_TO_HOST) == 0) {
+                int dump = l2sw_dbg_n < 6 ? l2sw_dbg_n : 6;
+                for (int c = 0; c < dump; c++) {
+                    LOG_WARN(
+                        "[L2SW-DBG-A] head_table[%d] = 0x%lx %s", c, static_cast<unsigned long>(ht[c]),
+                        ht[c] == 0 ? "(ZERO -> AICPU init did not fill it)" : "(non-zero = &pool.head filled)"
+                    );
+                }
+            }
+        }
         rtFree(l2sw_dbg_dev);
         l2sw_dbg_dev = nullptr;
     }
