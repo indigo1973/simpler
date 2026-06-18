@@ -102,6 +102,11 @@ struct KernelArgs {
     // mirroring the per-device simpler_inner preinstall fix. Trailing field —
     // keeps the CANN-fixed front offsets and AICore-read fields in place.
     uint32_t device_id{0};
+    // TEMPORARY L2SW-DBG: device ptr to a per-core uint64 array. AICore writes
+    // the head->current_buf_ptr value it reads (cross-core) into [block_idx], so
+    // the host can read back what AICore actually saw even on a 507000 run.
+    // 0 = disabled (set only when PTO_L2SW_DBG env is on). Remove with the probe.
+    uint64_t l2sw_dbg_base{0};
     // Opaque always-false guard read by the AICore SIMT meta anchor (AIV
     // KERNEL_ENTRY). The host never sets it non-zero; its only purpose is to be
     // a runtime-valued condition the compiler cannot constant-fold, so the

@@ -26,7 +26,7 @@
 
 #include <cassert>
 #include <cstddef>
-#include <cstdlib>  // L2SW-PROBE2: std::getenv / std::atoi (remove with the probe)
+#include <cstdlib>  // L2SW-DBG: std::getenv (remove with the probe)
 #include <cstring>
 #include <iostream>
 #include <string>
@@ -188,33 +188,6 @@ int DeviceRunner::run(Runtime &runtime, int block_dim, int launch_aicpu_num) {
     if (enable_pmu_) SET_PROFILING_FLAG(enable_profiling_flag, PROFILING_FLAG_PMU);
     if (enable_dep_gen_) SET_PROFILING_FLAG(enable_profiling_flag, PROFILING_FLAG_DEP_GEN);
     if (enable_scope_stats_) SET_PROFILING_FLAG(enable_profiling_flag, PROFILING_FLAG_SCOPE_STATS);
-    // TEMPORARY L2SW-PROBE2: a5 hardware-root-cause probe. Remove after the probe.
-    //   PTO_L2SW_PROBE=1 -> extra read of OWN record line, discard (no dsb)
-    //   PTO_L2SW_PROBE=2 -> extra read of head line, discard (no dsb)
-    //   PTO_L2SW_PROBE=3 -> extra read of head line + dsb (force completion), discard
-    //   PTO_L2SW_PROBE=4 -> extra read of OWN record line + dsb, discard (control for 3)
-    if (enable_l2_swimlane_) {
-        const char *probe = std::getenv("PTO_L2SW_PROBE");
-        int mode = probe != nullptr ? std::atoi(probe) : 0;
-        if (mode == 1) SET_PROFILING_FLAG(enable_profiling_flag, PROFILING_FLAG_L2SW_PROBE_READ_OWN);
-        if (mode == 2) SET_PROFILING_FLAG(enable_profiling_flag, PROFILING_FLAG_L2SW_PROBE_READ_HEAD);
-        if (mode == 3) SET_PROFILING_FLAG(enable_profiling_flag, PROFILING_FLAG_L2SW_PROBE_HEAD_DSB);
-        if (mode == 4) SET_PROFILING_FLAG(enable_profiling_flag, PROFILING_FLAG_L2SW_PROBE_OWN_DSB);
-        if (mode == 5) SET_PROFILING_FLAG(enable_profiling_flag, PROFILING_FLAG_L2SW_PROBE_READBACK);
-        if (mode != 0) {
-            LOG_WARN(
-                "[L2SW-PROBE2] mode=%d: extra per-task read (%s). Fixed baseline (unset) PASSes. "
-                "mode=3 (head+dsb) stalling => the cross-core head LOAD itself never completes; "
-                "mode=4 (own+dsb) is the control. 1/2 (no dsb) hide the load latency.",
-                mode,
-                mode == 1 ? "own record line, no dsb" :
-                mode == 2 ? "head line, no dsb" :
-                mode == 3 ? "head line + dsb (force completion)" :
-                mode == 4 ? "own record line + dsb (control)" :
-                            "?"
-            );
-        }
-    }
     kernel_args_.args.enable_profiling_flag = enable_profiling_flag;
 
     if (prepare_runtime_for_launch(runtime, block_dim, launch_aicpu_num) != 0) return -1;
@@ -293,6 +266,21 @@ int DeviceRunner::run(Runtime &runtime, int block_dim, int launch_aicpu_num) {
         if (rc != 0) {
             LOG_ERROR("init_l2_swimlane failed: %d", rc);
             return rc;
+        }
+    }
+
+    // TEMPORARY L2SW-DBG: per-core debug buffer for AICore to report the
+    // head->current_buf_ptr value it reads. Read back after sync (survives a
+    // 507000). Remove with the probe.
+    void *l2sw_dbg_dev = nullptr;
+    int l2sw_dbg_n = num_aicore;
+    if (enable_l2_swimlane_ && std::getenv("PTO_L2SW_DBG") != nullptr) {
+        size_t dbg_bytes = static_cast<size_t>(l2sw_dbg_n) * sizeof(uint64_t);
+        if (rtMalloc(&l2sw_dbg_dev, dbg_bytes, RT_MEMORY_HBM, 0) == 0 && l2sw_dbg_dev != nullptr) {
+            std::vector<uint64_t> zeros(l2sw_dbg_n, 0);
+            rtMemcpy(l2sw_dbg_dev, dbg_bytes, zeros.data(), dbg_bytes, RT_MEMCPY_HOST_TO_DEVICE);
+            kernel_args_.args.l2sw_dbg_base = reinterpret_cast<uint64_t>(l2sw_dbg_dev);
+            LOG_WARN("[L2SW-DBG] active: per-core head-value readback buffer at dev=%p", l2sw_dbg_dev);
         }
     }
 
@@ -402,6 +390,26 @@ int DeviceRunner::run(Runtime &runtime, int block_dim, int launch_aicpu_num) {
     }
 
     rc = sync_run_streams();
+    // TEMPORARY L2SW-DBG: read back the per-core head values AICore reported,
+    // right after sync — works even on a 507000 (device memory still readable
+    // here, before recover/teardown). Remove with the probe.
+    if (l2sw_dbg_dev != nullptr) {
+        std::vector<uint64_t> dbg(l2sw_dbg_n, 0);
+        size_t dbg_bytes = static_cast<size_t>(l2sw_dbg_n) * sizeof(uint64_t);
+        if (rtMemcpy(dbg.data(), dbg_bytes, l2sw_dbg_dev, dbg_bytes, RT_MEMCPY_DEVICE_TO_HOST) == 0) {
+            for (int c = 0; c < l2sw_dbg_n; c++) {
+                if (dbg[c] != 0) {
+                    LOG_WARN(
+                        "[L2SW-DBG] core=%d: AICore read head->current_buf_ptr = 0x%lx "
+                        "(valid AICore buffer addr looks like 0x1000xxxxxxxx)",
+                        c, static_cast<unsigned long>(dbg[c])
+                    );
+                }
+            }
+        }
+        rtFree(l2sw_dbg_dev);
+        l2sw_dbg_dev = nullptr;
+    }
     if (rc != 0) {
         // sync_run_streams surfaces the AICore op-timeout (STARS-reaped op ->
         // 507000/507018/507046 at AICPU/AICore stream sync). The op-timeout

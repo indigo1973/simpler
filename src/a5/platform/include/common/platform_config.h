@@ -205,28 +205,6 @@ inline double cycles_to_us(uint64_t cycles) {
 #define PROFILING_FLAG_PMU (1u << 2)
 #define PROFILING_FLAG_DEP_GEN (1u << 3)
 #define PROFILING_FLAG_SCOPE_STATS (1u << 4)
-// --- TEMPORARY L2SW-PROBE2: a5 hardware-root-cause probe (region vs cross-agent),
-// driven by the PTO_L2SW_PROBE env var (host reads it in device_runner). Built on
-// the FIXED code (AICore reads buffer ptr from payload, works). Each task AICore
-// does an EXTRA dcci+load of a chosen target, to find which property of the head
-// read is toxic. Remove after the probe. Default (no env) = clean fixed code.
-//   READ_OWN  : extra dcci+load of AICore's OWN just-written record line
-//               (profiling region, AICore-written) — isolates "reading the
-//               profiling region itself".
-//   READ_HEAD : extra dcci+load of the shared head line (profiling region,
-//               AICPU-written) — positive control, should reproduce 507000.
-#define PROFILING_FLAG_L2SW_PROBE_READ_OWN (1u << 8)
-#define PROFILING_FLAG_L2SW_PROBE_READ_HEAD (1u << 9)
-// + completion-timing test: same reads but FORCE completion with a dsb, to tell
-//   "the cross-core load never completes" (stall at dsb) from "it's the
-//   dependent-store ordering" (dsb returns, no stall).
-#define PROFILING_FLAG_L2SW_PROBE_HEAD_DSB (1u << 10)
-#define PROFILING_FLAG_L2SW_PROBE_OWN_DSB (1u << 11)
-// + readback: AICore reads head->current_buf_ptr and stamps the read value into
-//   record->task_token_raw (record still written to the SAFE payload buffer, no
-//   stall); host prints it. Tells "bad value" (0/garbage) from "address-dependent
-//   store hazard" (value == real buffer).
-#define PROFILING_FLAG_L2SW_PROBE_READBACK (1u << 12)
 #define GET_PROFILING_FLAG(flags, bit) ((((uint32_t)(flags)) & ((uint32_t)(bit))) != 0u)
 #define SET_PROFILING_FLAG(flags, bit) ((flags) |= (uint32_t)(bit))
 #define CLEAR_PROFILING_FLAG(flags, bit) ((flags) &= ~((uint32_t)(bit)))

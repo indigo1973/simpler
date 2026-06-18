@@ -86,6 +86,12 @@ __aicore__ uint32_t get_aicore_profiling_flag();
 __aicore__ void set_l2_swimlane_aicore_head_slot(__gm__ uint64_t *slot_ptr);
 __aicore__ __gm__ L2SwimlaneActiveHead *get_l2_swimlane_aicore_head();
 
+// TEMPORARY L2SW-DBG: per-core slot into the host debug buffer (set at kernel
+// entry from KernelArgs::l2sw_dbg_base[block_idx]; nullptr when disabled).
+// Remove with the probe.
+__aicore__ void set_l2sw_dbg_slot(__gm__ uint64_t *slot_ptr);
+__aicore__ __gm__ uint64_t *get_l2sw_dbg_slot();
+
 /**
  * Per-core PMU staging ring (a5-only — AICore writes the snapshot).
  */

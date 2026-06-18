@@ -54,6 +54,8 @@ class Runtime;
 [[block_local]] static __gm__ L2SwimlaneActiveHead *s_l2_swimlane_aicore_head;
 [[block_local]] static __gm__ PmuAicoreRing *s_aicore_pmu_ring;
 [[block_local]] static uint64_t s_aicore_pmu_reg_base;
+// TEMPORARY L2SW-DBG: per-core slot into the host debug buffer. Remove with probe.
+[[block_local]] static __gm__ uint64_t *s_l2sw_dbg_slot;
 
 __attribute__((weak)) __aicore__ void set_aicore_profiling_flag(uint32_t flag) { s_aicore_profiling_flag = flag; }
 __attribute__((weak)) __aicore__ uint32_t get_aicore_profiling_flag() { return s_aicore_profiling_flag; }
@@ -62,6 +64,9 @@ __attribute__((weak)) __aicore__ void set_l2_swimlane_aicore_head_slot(__gm__ ui
     s_l2_swimlane_aicore_head_slot = slot_ptr;
     s_l2_swimlane_aicore_head = nullptr;  // force lazy resolution on next get
 }
+// TEMPORARY L2SW-DBG. Remove with the probe.
+__attribute__((weak)) __aicore__ void set_l2sw_dbg_slot(__gm__ uint64_t *slot_ptr) { s_l2sw_dbg_slot = slot_ptr; }
+__attribute__((weak)) __aicore__ __gm__ uint64_t *get_l2sw_dbg_slot() { return s_l2sw_dbg_slot; }
 __attribute__((weak)) __aicore__ __gm__ L2SwimlaneActiveHead *get_l2_swimlane_aicore_head() {
     // Lazy first-call resolve: AICPU init populates `*s_l2_swimlane_aicore_head_slot`
     // before dispatching the first task, so by the time the executor reaches
@@ -136,6 +141,12 @@ extern "C" __global__ __aicore__ void KERNEL_ENTRY(aicore_kernel)(__gm__ KernelA
         set_l2_swimlane_aicore_head_slot(&head_table[block_idx]);
     } else {
         set_l2_swimlane_aicore_head_slot(nullptr);
+    }
+    // TEMPORARY L2SW-DBG: stash this core's slot into the host debug buffer. Remove with probe.
+    if (k_args->l2sw_dbg_base != 0) {
+        set_l2sw_dbg_slot(&reinterpret_cast<__gm__ uint64_t *>(k_args->l2sw_dbg_base)[block_idx]);
+    } else {
+        set_l2sw_dbg_slot(nullptr);
     }
     if (GET_PROFILING_FLAG(k_args->enable_profiling_flag, PROFILING_FLAG_PMU)) {
         __gm__ uint64_t *pmu_ring_table = reinterpret_cast<__gm__ uint64_t *>(k_args->aicore_pmu_ring_addrs);

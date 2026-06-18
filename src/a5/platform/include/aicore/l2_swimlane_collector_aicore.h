@@ -21,8 +21,6 @@
 
 #include "common/l2_swimlane_profiling.h"
 #include "aicore/aicore.h"
-#include "aicore/aicore_profiling_state.h"  // L2SW-PROBE2: get_aicore_profiling_flag / get_l2_swimlane_aicore_head (remove with probe)
-#include "common/platform_config.h"  // L2SW-PROBE2: GET_PROFILING_FLAG + probe bits
 
 // Include platform-specific timestamp implementation
 // Build system selects the correct inner_kernel.h based on platform:
@@ -35,49 +33,54 @@
 
 /**
  * AICore-local rotation state. Tracks which buffer this core is currently
- * writing into and the next slot. Rotation is detected by the per-task
- * `cur_buf_ptr` (delivered via the dispatch payload) changing vs `cached_buf`,
- * so AICore never reads a shared AICPU-written cache line.
+ * writing into and which slot is next. Reset by `l2_swimlane_aicore_record_task`
+ * when it observes a `current_buf_seq` bump on the shared `L2SwimlaneActiveHead`
+ * cache line (AICPU rotates by writing `current_buf_ptr` + bumping
+ * `current_buf_seq`, so the AICore-local state self-recovers without any
+ * AICore-side spin-wait).
  */
 struct L2SwimlaneAicoreLocalState {
     __gm__ L2SwimlaneAicoreTaskBuffer *cached_buf = nullptr;
+    // Must start != AICPU's initial head.current_buf_seq (0) so the first
+    // record_task call observes a mismatch and loads the buffer pointer.
+    uint32_t cached_buf_seq = UINT32_MAX;
     uint32_t slot_within_buf = 0;
 };
 
 /**
  * Record task execution performance data.
  *
- * AICore writes a slim L2SwimlaneAicoreTaskRecord into its current per-core
- * L2SwimlaneAicoreTaskBuffer at `records[slot_within_buf++]`. AICPU owns buffer
- * rotation (it enqueues a full buffer to the ready queue and pops a fresh one
- * from the free_queue every PLATFORM_AICORE_BUFFER_SIZE dispatches), giving
- * unbounded per-core records via host recycling. The current buffer pointer is
- * delivered to AICore **through the per-task dispatch payload**
- * (`PTO2DispatchPayload::l2_swimlane_cur_buf_ptr`, stamped by the scheduler
- * dispatch path right after the AICPU rotation hook). AICore reads it out of
- * the payload it already `dcci`s every task — it does NOT poll a shared
- * `L2SwimlaneActiveHead` line. (The earlier shared-head poll wedged the a5
- * AIC->AICPU FIN handshake: reading a GM line AICPU concurrently writes stalls
- * the a5 AICore pipeline so it never signals FIN. a2a3 tolerated it; a5 does
- * not.) AICore detects rotation simply by the payload pointer differing from
- * its cached copy and resets the slot.
+ * AICore writes a slim L2SwimlaneAicoreTaskRecord into its currently-published
+ * per-core L2SwimlaneAicoreTaskBuffer at `records[slot_within_buf++]`. The
+ * publication channel is an L2SwimlaneActiveHead cache line addressed via
+ * `KernelArgs::l2_swimlane_aicore_rotation_table[block_idx]` (points to the
+ * AICore pool's `head`, not directly to a buffer). AICPU updates
+ * `head->current_buf_ptr` and bumps `head->current_buf_seq` at dispatch
+ * boundaries; AICore detects the change by `dcci`-ing the head line per task
+ * and comparing the sequence to its locally cached copy.
  *
- * AICPU and AICore never read each other's hot-path data. The host
+ * AICPU and AICore never read each other's data on the hot path. The host
  * post-processor joins the AICore stream (multi-buffer per core, in order)
  * with the AICPU stream by `reg_task_id` at flush time. See
  * `docs/dfx/l2-swimlane-profiling.md`.
  *
- * Ordering: the dispatch path stamps `cur_buf_ptr` after the rotation hook and
- * before the `wmb()` + `write_reg(DATA_MAIN_BASE)`, so the value AICore reads
- * matches the buffer AICPU will recycle. The completion-before-dispatch
- * invariant (AICore per core is single-threaded; AICPU does not dispatch task
- * K+1 until K FIN'd) guarantees all prior records were written and dcci'd out
- * before AICPU enqueues the old buffer.
+ * Race avoidance: AICPU rotates strictly before `write_reg(DATA_MAIN_BASE)`
+ * for the first task of a new BUFFER_SIZE batch — driven by AICPU's own
+ * per-core dispatch count (no AICore-side signal). The runtime's
+ * completion-before-dispatch invariant (AICore per core is single-threaded
+ * and AICPU does not dispatch task K+1 until K FIN'd) guarantees all prior
+ * tasks have FIN'd at rotation time, so AICore has already finished writing
+ * their records and dcci'd them out before AICPU enqueues the old buffer to
+ * the ready queue.
  *
- * @param cur_buf_ptr     Current per-core AICore record buffer (GM device ptr)
- *                        for THIS dispatch, from the payload. 0 when AICPU had
- *                        no free buffer this batch (record dropped; AICPU
- *                        already bumped dropped_record_count).
+ * @param head            Per-core L2SwimlaneActiveHead channel — lazy-resolved on
+ *                        the executor's first-task branch via
+ *                        get_l2_swimlane_aicore_head(), which deref's the slot
+ *                        the kernel entry stashed from
+ *                        KernelArgs::l2_swimlane_aicore_rotation_table[block_idx].
+ *                        (Kernel entry can't deref directly — AICPU init runs
+ *                        concurrently with kernel entry, so the slot may not yet
+ *                        hold a valid address at that point.)
  * @param local           Per-core AICore-local state (caller-owned static)
  * @param task_token_raw  Full task identity (PTO2 encoding for tensormap_and_ringbuffer
  *                        runtime: `(ring_id << 32) | local_id`; plain task index
@@ -99,22 +102,22 @@ struct L2SwimlaneAicoreLocalState {
  * @param end_time        End timestamp
  */
 __aicore__ __attribute__((always_inline)) static inline void l2_swimlane_aicore_record_task(
-    uint64_t cur_buf_ptr, L2SwimlaneAicoreLocalState *local, uint64_t task_token_raw, uint32_t reg_task_id,
+    __gm__ L2SwimlaneActiveHead *head, L2SwimlaneAicoreLocalState *local, uint64_t task_token_raw, uint32_t reg_task_id,
     uint64_t start_time, uint64_t end_time
 ) {
-    if (cur_buf_ptr == 0) {
-        // AICPU couldn't pop a fresh buffer from free_queue this batch. Drop
-        // silently — AICPU side already bumped dropped_record_count.
-        return;
-    }
-    __gm__ L2SwimlaneAicoreTaskBuffer *buf = reinterpret_cast<__gm__ L2SwimlaneAicoreTaskBuffer *>(cur_buf_ptr);
-    // Detect rotation by the payload-delivered buffer pointer changing — no
-    // cross-core read of an AICPU-written channel. AICPU rotates exactly every
-    // PLATFORM_AICORE_BUFFER_SIZE dispatches, in lockstep with this per-core
-    // slot counter, so the slot stays in [0, BUFFER_SIZE).
-    if (buf != local->cached_buf) {
-        local->cached_buf = buf;
+    // Re-fetch head channel each task; cheap relative to the
+    // baseline `dcci(payload, ENTIRE_DATA_CACHE)` we already pay per task.
+    dcci(head, SINGLE_CACHE_LINE);
+    if (head->current_buf_seq != local->cached_buf_seq) {
+        local->cached_buf_seq = head->current_buf_seq;
+        local->cached_buf = reinterpret_cast<__gm__ L2SwimlaneAicoreTaskBuffer *>(head->current_buf_ptr);
         local->slot_within_buf = 0;
+    }
+    if (local->cached_buf == nullptr) {
+        // Rotation channel published a null pointer (AICPU couldn't pop a
+        // fresh buffer from free_queue). Drop silently — AICPU side already
+        // bumped dropped_record_count.
+        return;
     }
 
     uint32_t slot = local->slot_within_buf;
@@ -125,7 +128,7 @@ __aicore__ __attribute__((always_inline)) static inline void l2_swimlane_aicore_
         return;
     }
 
-    __gm__ L2SwimlaneAicoreTaskRecord *record = &buf->records[slot];
+    __gm__ L2SwimlaneAicoreTaskRecord *record = &local->cached_buf->records[slot];
     record->start_time = start_time;
     record->end_time = end_time;
     record->task_token_raw = task_token_raw;
@@ -133,73 +136,13 @@ __aicore__ __attribute__((always_inline)) static inline void l2_swimlane_aicore_
     local->slot_within_buf = slot + 1;
 
     // Flush record to GM so host can read it after the buffer is enqueued.
+    // No buffer-full signal is needed: AICPU drives rotation from its own
+    // per-core dispatch count (it knows how many DATA_MAIN_BASE writes it has
+    // sent to this core, and rotates before crossing a BUFFER_SIZE boundary).
     // The completion-before-dispatch invariant guarantees this dcci has hit
     // GM before AICPU enqueues the buffer.
     dcci(record, SINGLE_CACHE_LINE, CACHELINE_OUT);
     dsb((mem_dsb_t)0);
-
-    // L2SW-PROBE2: extra per-task cross-core read to isolate the a5 stall cause.
-    // Built on the fixed path (buffer ptr came from payload, no head read above),
-    // so reaching here proves AICore progressed normally. Remove after the probe.
-    uint32_t l2sw_probe_flag = get_aicore_profiling_flag();
-    if (GET_PROFILING_FLAG(l2sw_probe_flag, PROFILING_FLAG_L2SW_PROBE_READ_OWN)) {
-        // Read back AICore's OWN just-written record line (profiling region,
-        // AICore-written). If this stalls -> reading the profiling region itself
-        // is toxic on a5. If it completes -> the head stall is about reading a
-        // cross-agent (AICPU-written) line, not the region.
-        dcci(record, SINGLE_CACHE_LINE);
-        volatile uint64_t probe_own = record->start_time;
-        (void)probe_own;
-    }
-    if (GET_PROFILING_FLAG(l2sw_probe_flag, PROFILING_FLAG_L2SW_PROBE_READ_HEAD)) {
-        // Read the shared head line (profiling region, AICPU-written), discard.
-        // No dsb after — load is off the critical path, latency hidden.
-        __gm__ L2SwimlaneActiveHead *probe_head = get_l2_swimlane_aicore_head();
-        if (probe_head != nullptr) {
-            dcci(probe_head, SINGLE_CACHE_LINE);
-            volatile uint64_t probe_h = probe_head->current_buf_ptr;
-            (void)probe_h;
-        }
-    }
-    if (GET_PROFILING_FLAG(l2sw_probe_flag, PROFILING_FLAG_L2SW_PROBE_HEAD_DSB)) {
-        // Completion-timing test: read the head line then FORCE the load to
-        // complete with a dsb, discard the value. If this STALLS, the cross-core
-        // head load itself never completes on a5 (the dsb waits it out) — i.e.
-        // the hang is load-completion, not "using the value". If it PASSES, the
-        // load completes and the historical stall is the dependent-store ordering.
-        __gm__ L2SwimlaneActiveHead *probe_head = get_l2_swimlane_aicore_head();
-        if (probe_head != nullptr) {
-            dcci(probe_head, SINGLE_CACHE_LINE);
-            volatile uint64_t probe_h = probe_head->current_buf_ptr;
-            dsb((mem_dsb_t)0);
-            (void)probe_h;
-        }
-    }
-    if (GET_PROFILING_FLAG(l2sw_probe_flag, PROFILING_FLAG_L2SW_PROBE_READBACK)) {
-        // Readback: read the head value (cross-core) and STAMP it into this
-        // record's task_token_raw so the host can see what AICore actually read.
-        // The record lives in the SAFE payload buffer, so this extra write does
-        // not stall. If host sees 0/garbage -> bad value (write-to-bad-addr is
-        // the historical stall); if it sees the real current buffer -> the value
-        // is fine and the stall is the address-dependent-store hazard.
-        __gm__ L2SwimlaneActiveHead *probe_head = get_l2_swimlane_aicore_head();
-        if (probe_head != nullptr) {
-            dcci(probe_head, SINGLE_CACHE_LINE);
-            uint64_t hv = probe_head->current_buf_ptr;
-            record->task_token_raw = hv;
-            dcci(record, SINGLE_CACHE_LINE, CACHELINE_OUT);
-            dsb((mem_dsb_t)0);
-        }
-    }
-    if (GET_PROFILING_FLAG(l2sw_probe_flag, PROFILING_FLAG_L2SW_PROBE_OWN_DSB)) {
-        // Control for the dsb test: read AICore's OWN record line then dsb.
-        // If HEAD_DSB stalls but this PASSES -> only the cross-core (AICPU-written)
-        // head load fails to complete; a self-written line + dsb completes fine.
-        dcci(record, SINGLE_CACHE_LINE);
-        volatile uint64_t probe_own = record->start_time;
-        dsb((mem_dsb_t)0);
-        (void)probe_own;
-    }
 }
 
 #endif  // PLATFORM_AICORE_L2_SWIMLANE_COLLECTOR_AICORE_H_
