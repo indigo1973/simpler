@@ -107,6 +107,11 @@ extern "C" __attribute__((visibility("default"))) int simpler_aicpu_exec(void *a
     set_platform_dump_base(k_args->dump_data_base);
     set_dump_tensor_enabled(GET_PROFILING_FLAG(k_args->enable_profiling_flag, PROFILING_FLAG_DUMP_TENSOR));
     set_platform_l2_swimlane_base(k_args->l2_swimlane_data_base);
+    // ROOT-CAUSE FIX (a5 was missing this; a2a3 has it at its kernel.cpp:113).
+    // Without it, g_platform_l2_swimlane_aicore_rotation_table stays 0, so
+    // l2_swimlane_aicpu_init skips filling head_table[i]=&pool.head → AICore's
+    // get_l2_swimlane_aicore_head() resolves to NULL → null-head deref → 507000.
+    set_platform_l2_swimlane_aicore_rotation_table(k_args->l2_swimlane_aicore_rotation_table);
     set_l2_swimlane_enabled(GET_PROFILING_FLAG(k_args->enable_profiling_flag, PROFILING_FLAG_L2_SWIMLANE));
     set_platform_pmu_base(k_args->pmu_data_base);
     set_pmu_enabled(GET_PROFILING_FLAG(k_args->enable_profiling_flag, PROFILING_FLAG_PMU));
